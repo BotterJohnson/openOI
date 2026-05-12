@@ -24,6 +24,8 @@ interface MockEditor {
 	createShapes: ReturnType<typeof vi.fn<(nextShapes: MockShape[]) => void>>;
 	updateShapes: ReturnType<typeof vi.fn<(nextShapes: MockShape[]) => void>>;
 	deleteShapes: ReturnType<typeof vi.fn<(ids: string[]) => void>>;
+	getCameraOptions: ReturnType<typeof vi.fn<() => Record<string, unknown>>>;
+	setCameraOptions: ReturnType<typeof vi.fn<(options: Record<string, unknown>) => void>>;
 	getCurrentPageShapes: ReturnType<typeof vi.fn<() => MockShape[]>>;
 	getBindingsFromShape: ReturnType<typeof vi.fn<() => unknown[]>>;
 	createBindings: ReturnType<typeof vi.fn>;
@@ -142,6 +144,8 @@ const mockEditor = vi.hoisted(() => {
 		deleteShapes: vi.fn((ids: string[]) => {
 			shapes = shapes.filter((s) => !ids.includes(s.id));
 		}),
+		getCameraOptions: vi.fn(() => ({ wheelBehavior: "pan" })),
+		setCameraOptions: vi.fn(),
 		getCurrentPageShapes: vi.fn(() => shapes.map((shape) => ({ ...shape }))),
 		getBindingsFromShape: vi.fn(() => []),
 		createBindings: vi.fn(),
@@ -162,6 +166,8 @@ const mockEditor = vi.hoisted(() => {
 			editor.createShapes.mockClear();
 			editor.updateShapes.mockClear();
 			editor.deleteShapes.mockClear();
+			editor.getCameraOptions.mockClear();
+			editor.setCameraOptions.mockClear();
 			editor.getCurrentPageShapes.mockClear();
 			editor.getBindingsFromShape.mockClear();
 			editor.createBindings.mockClear();
@@ -204,15 +210,17 @@ vi.mock("tldraw", async (importOriginal) => {
 		Tldraw: ({
 			children,
 			onMount,
+			persistenceKey,
 		}: {
 			children: ReactNode;
 			onMount: (editor: unknown) => void;
+			persistenceKey?: string;
 		}) => {
 			useEffect(() => {
 				onMount(mockEditor);
 			}, [onMount]);
 
-			return <div>{children}</div>;
+			return <div data-persistence-key={persistenceKey}>{children}</div>;
 		},
 	};
 });
@@ -390,5 +398,19 @@ describe("InfiniteCanvas", () => {
 		expect(mockEditor.createShapes).not.toHaveBeenCalled();
 		expect(mockEditor.updateShapes).not.toHaveBeenCalled();
 		expect(mockEditor.deleteShapes).not.toHaveBeenCalled();
+	});
+
+	it("scopes persistence by project and configures wheel behavior on mount", async () => {
+		const { container } = render(<InfiniteCanvas projectId={42} />);
+
+		await waitFor(() => {
+			expect(mockEditor.setCameraOptions).toHaveBeenCalledWith(
+				expect.objectContaining({
+					wheelBehavior: "zoom",
+				}),
+			);
+		});
+
+		expect(container.querySelector("[data-persistence-key='openoii-canvas-project-42']")).toBeTruthy();
 	});
 });

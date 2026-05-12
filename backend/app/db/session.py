@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import (
@@ -32,9 +35,6 @@ async_session_maker: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 def _run_alembic_upgrade() -> None:
-    import subprocess
-    import sys
-    import os
     settings = get_settings()
     env = os.environ.copy()
     env["DATABASE_URL"] = settings.database_url.replace("+asyncpg", "+psycopg2")
@@ -50,6 +50,11 @@ def _run_alembic_upgrade() -> None:
         raise RuntimeError(f"alembic upgrade failed: {result.stderr}")
 
 
+async def _ensure_metadata_tables() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+
 async def init_db() -> None:
     """Initialize database tables and cleanup stale runs."""
     import logging
@@ -62,7 +67,10 @@ async def init_db() -> None:
         _run_alembic_upgrade()
         log.info("init_db: alembic upgrade done")
     except Exception as e:
-        log.warning("init_db: alembic upgrade failed (%s), skipping", e)
+        log.exception("init_db: alembic upgrade failed")
+        raise RuntimeError("Database migration failed") from e
+
+    await _ensure_metadata_tables()
 
     log.info("init_db: starting DB session cleanup")
     async with async_session_maker() as session:

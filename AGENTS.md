@@ -67,7 +67,12 @@ docker-compose down
 ## 测试分布
 - 后端测试在 `backend/tests/`，重点是 `test_api/`、`test_orchestration/`、`test_services/`、`test_agents/`，另有 `test_migrations.py` 和 `integration/`。
 - 前端单测与组件同目录；E2E 在 `frontend/tests/e2e/`。
-<!-- TRELLIS:START -->
+- <!-- TRELLIS:START -->
+
+## 更改历史
+
+- 在你不知道当前项目背景的前提下，请先参review文件下的更改历史
+
 # Trellis Instructions
 
 These instructions are for AI assistants working in this project.

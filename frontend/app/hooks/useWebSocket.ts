@@ -10,6 +10,7 @@ import type {
 	RunProgressEventData,
 	RunStartedEventData,
 	Shot,
+	TextStageEventData,
 	WsEvent,
 } from "~/types";
 import { toast } from "~/utils/toast";
@@ -276,6 +277,7 @@ export function applyWsEvent(
 			const d = event.data as unknown as RunStartedEventData;
 			store.setGenerating(true);
 			store.setProgress(0);
+			store.clearTextStages();
 			store.addMessage({
 				id: generateMessageId(),
 				agent: "system",
@@ -466,6 +468,23 @@ export function applyWsEvent(
 			if (shotId !== undefined) {
 				store.setShots(store.shots.filter((s) => s.id !== shotId));
 			}
+			break;
+		}
+
+		case "text_stage_started":
+		case "text_stage_updated":
+		case "text_stage_completed":
+		case "text_stage_failed": {
+			const d = event.data as unknown as TextStageEventData;
+			store.upsertTextStage({
+				stage: d.stage,
+				name: d.name,
+				status: d.status,
+				order: d.order,
+				artifact_id: d.artifact_id,
+				run_id: d.run_id ?? store.currentRunId ?? 0,
+				content: d.content ?? null,
+			});
 			break;
 		}
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -9,7 +10,25 @@ from app.agents.base import AgentContext, BaseAgent, CompletionInfo
 from app.agents.prompts.plan import SYSTEM_PROMPT
 from app.agents.utils import extract_json
 from app.db.utils import utcnow
+from app.models.artifact import Artifact
 from app.models.project import Character, Shot
+from app.models.run import Run
+from app.models.stage import Stage
+
+logger = logging.getLogger(__name__)
+
+TEXT_STAGE_SPECS: tuple[tuple[str, str], ...] = (
+    ("text_intake", "题材理解"),
+    ("text_story_outline", "故事大纲"),
+    ("text_chapter_flow", "章节剧情流程"),
+    ("text_arrangement", "编排过程"),
+    ("text_chapter_prose", "故事正文"),
+    ("text_storyboard", "分镜脚本"),
+    ("text_video_prompts", "视频提示词"),
+    ("text_consistency_review", "一致性检查"),
+)
+
+TEXT_STAGE_DISPLAY_NAMES: dict[str, str] = dict(TEXT_STAGE_SPECS)
 
 
 def _character_to_description(item: dict) -> str:
@@ -78,8 +97,362 @@ def _compose_video_prompt(shot_data: dict) -> str:
     return shot_data.get("description", "")
 
 
+def _chapter_data(data: dict[str, Any]) -> dict[str, Any]:
+    chapter = data.get("chapter")
+    return chapter if isinstance(chapter, dict) else {}
+
+
+def _story_outline_data(data: dict[str, Any]) -> dict[str, Any]:
+    outline = data.get("story_outline")
+    if isinstance(outline, dict):
+        return outline
+    return {
+        "premise": data.get("user_message") or "",
+        "worldview": (data.get("story_breakdown") or {}).get("setting")
+        if isinstance(data.get("story_breakdown"), dict)
+        else None,
+        "main_conflict": (data.get("story_breakdown") or {}).get("logline")
+        if isinstance(data.get("story_breakdown"), dict)
+        else None,
+        "chapters": [],
+    }
+
+
+def _storyboard_from_shots(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_shots = data.get("shots") or []
+    if not isinstance(raw_shots, list):
+        return []
+    storyboard: list[dict[str, Any]] = []
+    for idx, shot in enumerate(raw_shots):
+        if not isinstance(shot, dict):
+            continue
+        storyboard.append(
+            {
+                "order": shot.get("order") if isinstance(shot.get("order"), int) else idx + 1,
+                "scene": shot.get("scene"),
+                "beat": shot.get("description") or shot.get("action"),
+                "camera": shot.get("camera"),
+                "dialogue": shot.get("dialogue"),
+            }
+        )
+    return storyboard
+
+
+def _video_prompts_from_shots(data: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_shots = data.get("shots") or []
+    if not isinstance(raw_shots, list):
+        return []
+    prompts: list[dict[str, Any]] = []
+    for idx, shot in enumerate(raw_shots):
+        if not isinstance(shot, dict):
+            continue
+        prompt = _compose_video_prompt(shot)
+        if not prompt:
+            continue
+        prompts.append(
+            {
+                "order": shot.get("order") if isinstance(shot.get("order"), int) else idx + 1,
+                "prompt": prompt,
+                "negative_prompt": shot.get("negative_prompt"),
+                "duration": shot.get("duration"),
+            }
+        )
+    return prompts
+
+
 class PlanAgent(BaseAgent):
     name = "plan"
+
+    async def _ensure_lineage_run(self, ctx: AgentContext) -> Run:
+        if ctx.project.id is None or ctx.run.id is None:
+            raise RuntimeError("Project and agent run must be persisted before text stages")
+
+        thread_id = ctx.run.thread_id or f"agent-run-{ctx.run.id}"
+        res = await ctx.session.execute(select(Run).where(Run.thread_id == thread_id))
+        run = res.scalars().first()
+        if run is not None:
+            if run.status != ctx.run.status:
+                run.status = ctx.run.status
+                run.updated_at = utcnow()
+                ctx.session.add(run)
+                await ctx.session.flush()
+            return run
+
+        run = Run(
+            project_id=ctx.project.id,
+            thread_id=thread_id,
+            status=ctx.run.status,
+            source="agentrun",
+        )
+        ctx.session.add(run)
+        await ctx.session.flush()
+        return run
+
+    def _build_text_stage_payloads(self, ctx: AgentContext, data: dict[str, Any]) -> dict[str, Any]:
+        chapter = _chapter_data(data)
+        story_outline = _story_outline_data(data)
+        story_breakdown = (
+            data.get("story_breakdown") if isinstance(data.get("story_breakdown"), dict) else {}
+        )
+
+        storyboard_script = chapter.get("storyboard_script")
+        if not isinstance(storyboard_script, list) or not storyboard_script:
+            storyboard_script = _storyboard_from_shots(data)
+
+        video_prompts = chapter.get("video_prompts")
+        if not isinstance(video_prompts, list) or not video_prompts:
+            video_prompts = _video_prompts_from_shots(data)
+
+        plot_flow = chapter.get("plot_flow")
+        if not isinstance(plot_flow, list):
+            plot_flow = []
+
+        shots = data.get("shots") if isinstance(data.get("shots"), list) else []
+        characters = data.get("characters") if isinstance(data.get("characters"), list) else []
+        consistency_warnings: list[str] = []
+        if shots and video_prompts and len(video_prompts) != len(shots):
+            consistency_warnings.append("视频提示词数量与分镜数量不一致")
+        if shots and storyboard_script and len(storyboard_script) != len(shots):
+            consistency_warnings.append("分镜脚本数量与分镜数量不一致")
+
+        return {
+            "text_intake": {
+                "title": "题材理解",
+                "user_input": ctx.project.story or ctx.project.title,
+                "genre": story_breakdown.get("genre") or [],
+                "tone": story_breakdown.get("tone"),
+                "logline": story_breakdown.get("logline"),
+                "themes": story_breakdown.get("themes") or [],
+            },
+            "text_story_outline": {
+                "title": "故事大纲",
+                **story_outline,
+            },
+            "text_chapter_flow": {
+                "title": chapter.get("title") or "第 1 章",
+                "chapter_order": chapter.get("order") or 1,
+                "plot_flow": plot_flow,
+            },
+            "text_arrangement": {
+                "title": "编排过程",
+                "arrangement": chapter.get("arrangement") or "",
+            },
+            "text_chapter_prose": {
+                "title": chapter.get("title") or "第 1 章正文",
+                "prose": chapter.get("prose") or "",
+            },
+            "text_storyboard": {
+                "title": "分镜脚本",
+                "storyboard_script": storyboard_script,
+            },
+            "text_video_prompts": {
+                "title": "视频提示词",
+                "video_prompts": video_prompts,
+            },
+            "text_consistency_review": {
+                "title": "一致性检查",
+                "status": "passed" if not consistency_warnings else "warning",
+                "warnings": consistency_warnings,
+                "character_count": len(characters),
+                "shot_count": len(shots),
+                "video_prompt_count": len(video_prompts),
+            },
+        }
+
+    async def _emit_text_stage_event(
+        self,
+        ctx: AgentContext,
+        *,
+        event_type: str,
+        stage: Stage,
+        name: str,
+        order: int,
+        artifact: Artifact | None = None,
+        content: dict[str, Any] | None = None,
+    ) -> None:
+        if ctx.project.id is None:
+            raise RuntimeError("Project must be persisted before text stage events")
+
+        await ctx.ws.send_event(
+            ctx.project.id,
+            {
+                "type": event_type,
+                "data": {
+                    "run_id": ctx.run.id,
+                    "project_id": ctx.project.id,
+                    "stage": stage.name,
+                    "name": name,
+                    "status": stage.status,
+                    "order": order,
+                    "artifact_id": artifact.id if artifact and artifact.id is not None else 0,
+                    "content": content,
+                },
+            },
+        )
+
+    async def _set_text_stage_status(
+        self,
+        ctx: AgentContext,
+        stage: Stage,
+        *,
+        status: str,
+        order: int,
+        artifact: Artifact | None = None,
+        content: dict[str, Any] | None = None,
+        event_type: str = "text_stage_updated",
+    ) -> None:
+        stage.status = status
+        stage.updated_at = utcnow()
+        ctx.session.add(stage)
+        await ctx.session.commit()
+        await ctx.session.refresh(stage)
+        await self._emit_text_stage_event(
+            ctx,
+            event_type=event_type,
+            stage=stage,
+            name=TEXT_STAGE_DISPLAY_NAMES.get(stage.name, stage.name),
+            order=order,
+            artifact=artifact,
+            content=content,
+        )
+
+    async def _seed_text_stages(self, ctx: AgentContext) -> tuple[Run, dict[str, Stage]]:
+        if ctx.project.id is None:
+            raise RuntimeError("Project must be persisted before text stages")
+
+        lineage_run = await self._ensure_lineage_run(ctx)
+        if lineage_run.id is None:
+            raise RuntimeError("Lineage run must be persisted before text stages")
+
+        stage_map: dict[str, Stage] = {}
+        for index, (stage_name, display_name) in enumerate(TEXT_STAGE_SPECS, start=1):
+            stage = Stage(
+                project_id=ctx.project.id,
+                run_id=lineage_run.id,
+                name=stage_name,
+                status="pending",
+                version=1,
+                source="text_pipeline",
+            )
+            ctx.session.add(stage)
+            await ctx.session.flush()
+            stage_map[stage_name] = stage
+            await self._emit_text_stage_event(
+                ctx,
+                event_type="text_stage_updated",
+                stage=stage,
+                name=display_name,
+                order=index,
+            )
+
+        await ctx.session.commit()
+        logger.info(
+            "Seeded text stages for project_id=%s run_id=%s lineage_run_id=%s",
+            ctx.project.id,
+            ctx.run.id,
+            lineage_run.id,
+        )
+        return lineage_run, stage_map
+
+    async def _persist_text_stages(
+        self,
+        ctx: AgentContext,
+        data: dict[str, Any],
+        lineage_run: Run,
+        stage_map: dict[str, Stage],
+    ) -> None:
+        payloads = self._build_text_stage_payloads(ctx, data)
+        for index, (stage_name, display_name) in enumerate(TEXT_STAGE_SPECS, start=1):
+            stage = stage_map[stage_name]
+            payload = payloads.get(stage_name, {})
+            status = "completed"
+            if stage_name in {"text_chapter_prose", "text_storyboard", "text_video_prompts"}:
+                empty = not any(
+                    payload.get(key)
+                    for key in ("prose", "storyboard_script", "video_prompts")
+                    if isinstance(payload, dict)
+                )
+                if empty:
+                    status = "needs_review"
+
+            logger.info(
+                "Persisting text stage=%s project_id=%s run_id=%s status=%s",
+                stage_name,
+                ctx.project.id,
+                ctx.run.id,
+                status,
+            )
+            artifact = Artifact(
+                project_id=ctx.project.id,
+                run_id=lineage_run.id,
+                stage_id=stage.id,
+                name=display_name,
+                artifact_type="text",
+                uri=f"db://artifact/{stage_name}",
+                content=payload if isinstance(payload, dict) else {"value": payload},
+                version=1,
+                source="llm",
+            )
+            ctx.session.add(artifact)
+            await ctx.session.commit()
+            await ctx.session.refresh(artifact)
+            await self._set_text_stage_status(
+                ctx,
+                stage,
+                status=status,
+                order=index,
+                artifact=artifact,
+                content=artifact.content,
+                event_type="text_stage_completed",
+            )
+
+            if index < len(TEXT_STAGE_SPECS):
+                next_name = TEXT_STAGE_SPECS[index][0]
+                next_stage = stage_map[next_name]
+                if next_stage.status == "pending":
+                    logger.info(
+                        "Starting next text stage=%s project_id=%s run_id=%s",
+                        next_name,
+                        ctx.project.id,
+                        ctx.run.id,
+                    )
+                    await self._set_text_stage_status(
+                        ctx,
+                        next_stage,
+                        status="running",
+                        order=index + 1,
+                        event_type="text_stage_started",
+                    )
+
+    async def _mark_text_stage_failed(
+        self,
+        ctx: AgentContext,
+        stage_map: dict[str, Stage],
+        stage_name: str,
+        error_message: str,
+    ) -> None:
+        stage = stage_map.get(stage_name)
+        if stage is None:
+            return
+        logger.error(
+            "Text stage failed stage=%s project_id=%s run_id=%s error=%s",
+            stage_name,
+            ctx.project.id,
+            ctx.run.id,
+            error_message,
+        )
+        order = next(
+            index for index, (name, _) in enumerate(TEXT_STAGE_SPECS, start=1) if name == stage_name
+        )
+        await self._set_text_stage_status(
+            ctx,
+            stage,
+            status="failed",
+            order=order,
+            content={"error": error_message},
+            event_type="text_stage_failed",
+        )
+        await ctx.session.commit()
 
     async def _get_existing_state(self, ctx: AgentContext) -> dict[str, Any]:
         char_res = await ctx.session.execute(
@@ -231,6 +604,15 @@ class PlanAgent(BaseAgent):
 
     async def _call_plan_llm(self, ctx: AgentContext) -> dict[str, Any]:
         """Call LLM for planning and cache the result in ctx."""
+        lineage_run, stage_map = await self._seed_text_stages(ctx)
+        await self._set_text_stage_status(
+            ctx,
+            stage_map["text_intake"],
+            status="running",
+            order=1,
+            event_type="text_stage_started",
+        )
+
         is_incremental = ctx.rerun_mode == "incremental"
         payload: dict[str, Any] = {
             "project": {
@@ -252,10 +634,62 @@ class PlanAgent(BaseAgent):
             payload["existing_state"] = existing_state
 
         user_prompt = json.dumps(payload, ensure_ascii=False)
-        resp = await self.call_llm(
-            ctx, system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, max_tokens=4096
+        intake_payload = {
+            "title": "题材理解",
+            "user_input": ctx.project.story or ctx.project.title,
+            "genre": [ctx.project.title] if ctx.project.title else [],
+            "tone": None,
+            "logline": None,
+            "themes": [],
+        }
+        await self._set_text_stage_status(
+            ctx,
+            stage_map["text_intake"],
+            status="completed",
+            order=1,
+            content=intake_payload,
+            event_type="text_stage_completed",
         )
-        data = extract_json(resp.text)
+        await self._set_text_stage_status(
+            ctx,
+            stage_map["text_story_outline"],
+            status="running",
+            order=2,
+            event_type="text_stage_started",
+        )
+
+        logger.info(
+            "Calling plan llm project_id=%s run_id=%s mode=%s",
+            ctx.project.id,
+            ctx.run.id,
+            ctx.rerun_mode,
+        )
+        resp = None
+        try:
+            resp = await self.call_llm(
+                ctx, system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt, max_tokens=8192
+            )
+            data = extract_json(resp.text)
+            logger.info(
+                "Plan llm response parsed project_id=%s run_id=%s",
+                ctx.project.id,
+                ctx.run.id,
+            )
+        except Exception as exc:
+            if resp is not None:
+                logger.error(
+                    "Plan llm raw response project_id=%s run_id=%s text=%s",
+                    ctx.project.id,
+                    ctx.run.id,
+                    resp.text[:1000],
+                )
+            await self._mark_text_stage_failed(
+                ctx,
+                stage_map,
+                "text_story_outline",
+                str(exc) or "文本模型调用失败",
+            )
+            raise
 
         # Apply project updates from LLM
         project_update = data.get("project_update") or {}
@@ -283,6 +717,21 @@ class PlanAgent(BaseAgent):
                     "data": {"project": {"id": ctx.project.id, **updated_fields}},
                 },
             )
+
+        try:
+            await self._persist_text_stages(ctx, data, lineage_run, stage_map)
+        except Exception as exc:
+            running_stage_name = next(
+                (name for name, stage in stage_map.items() if stage.status == "running"),
+                "text_story_outline",
+            )
+            await self._mark_text_stage_failed(
+                ctx,
+                stage_map,
+                running_stage_name,
+                str(exc) or "文本阶段持久化失败",
+            )
+            raise
 
         # Cache for run_shots()
         ctx.plan_data = data

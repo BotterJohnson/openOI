@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
 from typing import Any, get_args, get_origin
 
@@ -10,7 +9,11 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings, apply_settings_overrides as apply_settings_overrides_to_runtime
+from app.config import (
+    Settings,
+    apply_settings_overrides as apply_settings_overrides_to_runtime,
+    resolve_settings_env_file,
+)
 from app.db.utils import utcnow
 from app.models.config_item import ConfigItem
 
@@ -40,10 +43,11 @@ RESTART_REQUIRED_KEYS = {
 RESTART_REQUIRED_PREFIXES = ("DATABASE_", "REDIS_")
 
 SETTINGS_ENV_FIELD_MAP = {name.upper(): name for name in Settings.model_fields}
+SETTINGS_FIELD_ENV_MAP = {name: name.upper() for name in Settings.model_fields}
 
 
 def _resolve_env_path() -> Path:
-    return Path(os.getenv("ENV_FILE", ".env"))
+    return resolve_settings_env_file()
 
 
 def _strip_inline_comment(value: str) -> str:
@@ -87,6 +91,16 @@ def _load_env_file() -> dict[str, str]:
         value = _unquote(value.strip())
         data[key] = value
     return data
+
+
+def _serialize_config_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, dict, tuple, set)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 def is_sensitive_key(key: str) -> bool:
@@ -192,7 +206,13 @@ class ConfigService:
         res = await self.session.execute(select(ConfigItem))
         items = res.scalars().all()
         db_map = {item.key: item for item in items}
-        keys = sorted(set(env_values) | set(db_map), key=str.lower)
+        default_values = {
+            env_key: Settings.model_fields[field_name].get_default(
+                call_default_factory=True
+            )
+            for field_name, env_key in SETTINGS_FIELD_ENV_MAP.items()
+        }
+        keys = sorted(set(default_values) | set(env_values) | set(db_map), key=str.lower)
         results: list[dict[str, Any]] = []
         for key in keys:
             item = db_map.get(key)
@@ -200,10 +220,15 @@ class ConfigService:
                 value = item.value
                 is_sensitive = item.is_sensitive or is_sensitive_key(key)
                 source = "db"
-            else:
+            elif key in env_values:
                 value = env_values.get(key)
                 is_sensitive = is_sensitive_key(key)
                 source = "env"
+            else:
+                raw_value = default_values.get(key)
+                value = _serialize_config_value(raw_value)
+                is_sensitive = is_sensitive_key(key)
+                source = "default"
             if is_sensitive and value is not None:
                 display_value = mask_value(value)
                 is_masked = True

@@ -10,6 +10,7 @@ const defaultProps = {
 	summary: "test summary",
 	characters: [] as Character[],
 	shots: [] as Shot[],
+	textStages: [],
 	videoUrl: null as string | null,
 	videoTitle: "Video",
 	visibleSections: ["plan"] as SectionKey[],
@@ -219,6 +220,38 @@ describe("useCanvasLayout", () => {
 		expect(planShape?.props).toBeDefined();
 		expect((planShape!.props as Record<string, unknown>).sectionState).toBe(
 			"complete",
+		);
+	});
+
+	it("passes text stages into the plan section and marks it complete", () => {
+		const textStages = [
+			{
+				stage: "text_chapter_prose",
+				name: "故事正文",
+				status: "completed",
+				order: 5,
+				artifact_id: 10,
+				run_id: 1,
+				content: { prose: "暮色压住青岚宗外门。" },
+			},
+		] as never;
+		const { result } = renderHook(() =>
+			useCanvasLayout({
+				...defaultProps,
+				story: null,
+				summary: null,
+				textStages,
+				visibleSections: ["plan"] as SectionKey[],
+			}),
+		);
+		const planShape = result.current.shapes.find(
+			(s) => s.type === "plan-section",
+		);
+		expect((planShape!.props as Record<string, unknown>).sectionState).toBe(
+			"complete",
+		);
+		expect((planShape!.props as Record<string, unknown>).textStages).toEqual(
+			textStages,
 		);
 	});
 });

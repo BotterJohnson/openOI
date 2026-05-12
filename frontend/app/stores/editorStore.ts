@@ -10,6 +10,7 @@ import type {
 	RecoverySummaryRead,
 	RunAwaitingConfirmEventData,
 	Shot,
+	TextStage,
 	WorkflowStage,
 } from "~/types";
 
@@ -34,6 +35,7 @@ interface EditorState {
 	runMode: RunMode;
 	characters: Character[];
 	shots: Shot[];
+	textStages: TextStage[];
 	projectVideoUrl: string | null;
 	projectStatus: string | null;
 	projectUpdatedAt: number | null;
@@ -61,6 +63,9 @@ interface EditorState {
 	setRecoveryGate: (gate: RunAwaitingConfirmEventData | null) => void;
 	setCharacters: (characters: Character[]) => void;
 	setShots: (shots: Shot[]) => void;
+	setTextStages: (stages: TextStage[]) => void;
+	upsertTextStage: (stage: TextStage) => void;
+	clearTextStages: () => void;
 	setProjectVideoUrl: (url: string | null) => void;
 	setProjectStatus: (status: string | null) => void;
 	setProjectUpdatedAt: (timestamp: number) => void;
@@ -112,6 +117,7 @@ const initialState = {
 	messages: [],
 	characters: [],
 	shots: [],
+	textStages: [],
 	projectVideoUrl: null,
 	projectStatus: null,
 	projectUpdatedAt: null,
@@ -166,6 +172,27 @@ export const useEditorStore = create<EditorState>()(
 			setCharacters: (characters) =>
 				set({ characters }, false, "setCharacters"),
 			setShots: (shots) => set({ shots }, false, "setShots"),
+			setTextStages: (textStages) =>
+				set(
+					{ textStages: [...textStages].sort((a, b) => a.order - b.order) },
+					false,
+					"setTextStages",
+				),
+			upsertTextStage: (stage) =>
+				set(
+					(state) => {
+						const next = state.textStages.some((s) => s.stage === stage.stage)
+							? state.textStages.map((s) =>
+									s.stage === stage.stage ? { ...s, ...stage } : s,
+								)
+							: [...state.textStages, stage];
+						return { textStages: next.sort((a, b) => a.order - b.order) };
+					},
+					false,
+					"upsertTextStage",
+				),
+			clearTextStages: () =>
+				set({ textStages: [] }, false, "clearTextStages"),
 			setProjectVideoUrl: (url) =>
 				set({ projectVideoUrl: url }, false, "setProjectVideoUrl"),
 			setProjectStatus: (status) =>

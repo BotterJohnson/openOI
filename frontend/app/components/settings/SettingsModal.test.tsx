@@ -452,6 +452,29 @@ describe("SettingsModal", () => {
 		});
 	});
 
+	it("文本配置说明会标明当前生效的 provider 和配置组", async () => {
+		const user = userEvent.setup();
+		renderComponent();
+
+		const textTab = await screen.findByRole("tab", { name: /文本生成/i });
+		await user.click(textTab);
+
+		await waitFor(() => {
+			expect(screen.getByText(/当前生效：Anthropic Claude/)).toBeInTheDocument();
+			expect(screen.getByText(/TEXT_PROVIDER=anthropic 时只使用/)).toBeInTheDocument();
+			expect(screen.getByText(/当前 TEXT_PROVIDER=anthropic/)).toBeInTheDocument();
+		});
+
+		await user.click(screen.getByRole("radio", { name: /OpenAI 兼容/ }));
+
+		await waitFor(() => {
+			expect(
+				screen.getByText(/当前生效：OpenAI 兼容接口/),
+			).toBeInTheDocument();
+			expect(screen.getByText(/当前 TEXT_PROVIDER=openai/)).toBeInTheDocument();
+		});
+	});
+
 	it("修改配置值", async () => {
 		const user = userEvent.setup();
 		renderComponent();
@@ -510,6 +533,42 @@ describe("SettingsModal", () => {
 		await waitFor(() => {
 			expect(screen.getByText("保存成功")).toBeInTheDocument();
 			expect(screen.getByText("配置已保存并立即生效！")).toBeInTheDocument();
+		});
+	});
+
+	it("保存时只提交用户实际修改的配置", async () => {
+		const user = userEvent.setup();
+		vi.mocked(configApi.get).mockResolvedValue([
+			...mockConfigData,
+			{
+				key: "TEXT_MODEL",
+				value: "deepseek-v4-flash",
+				is_sensitive: false,
+				is_masked: false,
+				source: "default",
+			},
+		]);
+		vi.mocked(configApi.update).mockResolvedValue({
+			updated: 1,
+			skipped: 0,
+			restart_required: false,
+			restart_keys: [],
+			message: "配置已保存",
+		});
+
+		renderComponent();
+
+		const redisInput = await screen.findByDisplayValue(
+			"redis://localhost:6379/0",
+		);
+		await user.clear(redisInput);
+		await user.type(redisInput, "redis://newhost:6379/1");
+		await user.click(screen.getByRole("button", { name: /保存/i }));
+
+		await waitFor(() => {
+			expect(configApi.update).toHaveBeenCalledWith({
+				REDIS_URL: "redis://newhost:6379/1",
+			});
 		});
 	});
 

@@ -85,8 +85,10 @@ class _StubOrchestrator:
         type(self).next_run_exception = None
         if exc is not None:
             raise exc
-    async def resume_from_recovery(self, *, project_id, run_id) -> None:
-        self.resume_calls.append({"project_id": project_id, "run_id": run_id})
+    async def resume_from_recovery(self, *, project_id, run_id, auto_mode=False) -> None:
+        self.resume_calls.append(
+            {"project_id": project_id, "run_id": run_id, "auto_mode": auto_mode}
+        )
         exc = type(self).next_resume_exception
         type(self).next_resume_exception = None
         if exc is not None:
@@ -200,7 +202,7 @@ async def closure_client(closure_app):
 
 
 @pytest.mark.asyncio
-async def test_generate_closure_invokes_orchestrator_run(closure_client):
+async def test_generate_closure_invokes_orchestrator_run_from_agent(closure_client):
     client, ctx = closure_client
     session_maker = ctx["session_maker"]
 
@@ -210,9 +212,11 @@ async def test_generate_closure_invokes_orchestrator_run(closure_client):
     res = await client.post(f"/api/v1/projects/{project.id}/generate", json={})
     assert res.status_code == 201
 
-    # The closure should have created an orchestrator and called run().
+    # The closure should have created an orchestrator and called run_from_agent().
     assert len(_StubOrchestrator.instances) == 1
-    assert _StubOrchestrator.instances[0].run_calls[0]["project_id"] == project.id
+    call = _StubOrchestrator.instances[0].run_from_agent_calls[0]
+    assert call["project_id"] == project.id
+    assert call["agent_name"] == "plan"
 
 
 @pytest.mark.asyncio
@@ -249,11 +253,24 @@ async def test_generate_returns_409_for_recoverable_conflict(closure_client):
 
 
 @pytest.mark.asyncio
+async def test_generate_allows_restart_after_cancelled_run(closure_client):
+    client, ctx = closure_client
+    session_maker = ctx["session_maker"]
+
+    async with session_maker() as session:
+        project = await create_project(session)
+        await create_run(session, project_id=project.id, status="cancelled")
+
+    res = await client.post(f"/api/v1/projects/{project.id}/generate", json={})
+    assert res.status_code == 201
+
+
+@pytest.mark.asyncio
 async def test_generate_closure_handles_cancel_and_marks_run_cancelled(closure_client):
     client, ctx = closure_client
     session_maker = ctx["session_maker"]
 
-    _StubOrchestrator.next_run_exception = asyncio.CancelledError()
+    _StubOrchestrator.next_run_from_agent_exception = asyncio.CancelledError()
 
     async with session_maker() as session:
         project = await create_project(session)

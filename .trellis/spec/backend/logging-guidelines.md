@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 
 Do not import a shared `logger` from another module. Each `__name__` becomes the channel — that's the value that ends up in log filters and grep.
 
-The root logger is configured by uvicorn (`log_level` defaults to `INFO`, controlled by `Settings.log_level`). The application itself does not call `logging.basicConfig` in production paths.
+The root logger is configured centrally by `app.logging_config.configure_logging()` during `create_app()`. It installs console output plus a rotating file handler by default. Uvicorn loggers propagate into the same handlers so API, WS, startup, and server logs land in one place.
+
+Settings:
+
+- `LOG_LEVEL` controls the root level and defaults to `INFO`.
+- `LOG_TO_FILE=true` enables rotating file output.
+- `LOG_DIR=logs` and `LOG_FILE=openoii.log` write to `backend/logs/openoii.log` when running from `backend/`.
+- `LOG_MAX_BYTES` and `LOG_BACKUP_COUNT` control rotation.
+
+Do not call `logging.basicConfig()` or attach ad-hoc file handlers from feature modules. Add new logging behavior to `app.logging_config` instead.
 
 ---
 
@@ -160,6 +169,7 @@ Use the project id and (when available) run id as positional args / `extra` so c
 ## Examples
 
 - Per-module logger pattern: any file under `app/services/`, e.g. `app/services/doubao_video.py:20`.
+- Logging setup: `app/logging_config.py`.
 - Structured context with `extra=`: `app/main.py` exception handlers.
 - Lifecycle logs (start / progress / done / fail): `app/services/doubao_video.py` task creation flow.
 - Path-traversal warning pattern: `app/services/file_cleaner.py:51`.

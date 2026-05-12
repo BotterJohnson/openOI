@@ -3,7 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app import main as main_module
@@ -16,6 +18,7 @@ def test_create_app_mounts_static_and_health(monkeypatch):
         cors_origins=["http://localhost:3000"],
         api_v1_prefix="/api/v1",
         environment="development",
+        log_to_file=False,
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
 
@@ -32,6 +35,7 @@ async def test_health_endpoint_returns_ok(monkeypatch):
         cors_origins=[],
         api_v1_prefix="/api/v1",
         environment="development",
+        log_to_file=False,
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
 
@@ -72,6 +76,7 @@ async def test_app_exception_handler_returns_error_payload(monkeypatch):
         cors_origins=[],
         api_v1_prefix="/api/v1",
         environment="development",
+        log_to_file=False,
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
     app = main_module.create_app()
@@ -86,12 +91,69 @@ async def test_app_exception_handler_returns_error_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_http_exception_handler_logs_and_preserves_detail(monkeypatch, caplog):
+    settings = SimpleNamespace(
+        app_name="openOii",
+        cors_origins=[],
+        api_v1_prefix="/api/v1",
+        environment="development",
+        log_to_file=False,
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    app = main_module.create_app()
+
+    with caplog.at_level("WARNING"):
+        response = await app.exception_handlers[StarletteHTTPException](
+            SimpleNamespace(url=SimpleNamespace(path="/missing"), method="GET"),
+            HTTPException(status_code=404, detail="Project not found"),
+        )
+
+    assert response.status_code == 404
+    assert b"Project not found" in response.body
+    assert any("HTTPException: Project not found" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_request_validation_exception_handler_logs_and_preserves_detail(monkeypatch, caplog):
+    settings = SimpleNamespace(
+        app_name="openOii",
+        cors_origins=[],
+        api_v1_prefix="/api/v1",
+        environment="development",
+        log_to_file=False,
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+    app = main_module.create_app()
+    exc = RequestValidationError(
+        [
+            {
+                "type": "missing",
+                "loc": ("body", "title"),
+                "msg": "Field required",
+                "input": {},
+            }
+        ]
+    )
+
+    with caplog.at_level("WARNING"):
+        response = await app.exception_handlers[RequestValidationError](
+            SimpleNamespace(url=SimpleNamespace(path="/projects"), method="POST"),
+            exc,
+        )
+
+    assert response.status_code == 422
+    assert b"Field required" in response.body
+    assert any("Request validation failed" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_general_exception_handler_in_development_includes_details(monkeypatch):
     settings = SimpleNamespace(
         app_name="openOii",
         cors_origins=[],
         api_v1_prefix="/api/v1",
         environment="development",
+        log_to_file=False,
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
     app = main_module.create_app()
@@ -111,6 +173,7 @@ async def test_general_exception_handler_in_production_omits_details(monkeypatch
         cors_origins=[],
         api_v1_prefix="/api/v1",
         environment="production",
+        log_to_file=False,
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
     app = main_module.create_app()

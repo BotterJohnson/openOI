@@ -18,7 +18,13 @@ def test_build_engine_uses_current_settings(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_init_db_runs_schema_check_and_config(monkeypatch):
-    calls = {"alembic_upgrade": False, "ensure_initialized": False, "apply_overrides": False, "checkpointer": False}
+    calls = {
+        "alembic_upgrade": False,
+        "metadata_tables": False,
+        "ensure_initialized": False,
+        "apply_overrides": False,
+        "checkpointer": False,
+    }
 
     class FakeConfigService:
         def __init__(self, session):
@@ -49,6 +55,9 @@ async def test_init_db_runs_schema_check_and_config(monkeypatch):
     def fake_alembic_upgrade():
         calls["alembic_upgrade"] = True
     monkeypatch.setattr(session_module, "_run_alembic_upgrade", fake_alembic_upgrade)
+    async def fake_metadata_tables():
+        calls["metadata_tables"] = True
+    monkeypatch.setattr(session_module, "_ensure_metadata_tables", fake_metadata_tables)
     async def fake_checkpointer(url):
         calls["checkpointer"] = True
     monkeypatch.setattr(session_module, "ensure_postgres_checkpointer_setup", fake_checkpointer)
@@ -57,6 +66,7 @@ async def test_init_db_runs_schema_check_and_config(monkeypatch):
 
     assert calls == {
         "alembic_upgrade": True,
+        "metadata_tables": True,
         "ensure_initialized": True,
         "apply_overrides": True,
         "checkpointer": True,

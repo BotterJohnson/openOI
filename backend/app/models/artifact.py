@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
+
+from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
 from app.db.utils import utcnow
@@ -14,6 +17,7 @@ class Artifact(SQLModel, table=True):
     name: str = Field(index=True)
     artifact_type: str = Field(index=True)
     uri: str
+    content: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
     version: int = Field(default=1, ge=1)
     source: str = Field(default="provider")
     created_at: datetime = Field(default_factory=utcnow)

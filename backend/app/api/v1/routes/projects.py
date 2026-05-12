@@ -13,7 +13,9 @@ from app.api.deps import SessionDep, SettingsDep, get_or_404
 from app.config import Settings
 from app.db.utils import utcnow
 from app.models.message import Message
+from app.models.artifact import Artifact
 from app.models.project import Character, Project, Shot
+from app.models.stage import Stage
 from app.schemas.project import (
     CharacterRead,
     MessageRead,
@@ -24,12 +26,35 @@ from app.schemas.project import (
     ProjectRead,
     ProjectUpdate,
     ShotRead,
+    TextStageRead,
 )
 from app.services.file_cleaner import get_local_path
 from app.services.project_deletion import delete_project_by_id, delete_projects_by_ids
 from app.services.provider_resolution import resolve_project_provider_settings_async
 
 router = APIRouter()
+
+TEXT_STAGE_ORDER: tuple[str, ...] = (
+    "text_intake",
+    "text_story_outline",
+    "text_chapter_flow",
+    "text_arrangement",
+    "text_chapter_prose",
+    "text_storyboard",
+    "text_video_prompts",
+    "text_consistency_review",
+)
+
+TEXT_STAGE_DISPLAY_NAMES: dict[str, str] = {
+    "text_intake": "题材理解",
+    "text_story_outline": "故事大纲",
+    "text_chapter_flow": "章节剧情流程",
+    "text_arrangement": "编排过程",
+    "text_chapter_prose": "故事正文",
+    "text_storyboard": "分镜脚本",
+    "text_video_prompts": "视频提示词",
+    "text_consistency_review": "一致性检查",
+}
 
 
 async def _project_provider_settings(
@@ -227,3 +252,66 @@ async def list_messages(project_id: int, session: AsyncSession = SessionDep):
         .order_by(message_created_at_col.asc())
     )
     return [MessageRead.model_validate(m) for m in res.scalars().all()]
+
+
+@router.get("/{project_id}/text-stages", response_model=list[TextStageRead])
+async def list_text_stages(project_id: int, session: AsyncSession = SessionDep):
+    await get_or_404(session, Project, project_id)
+    stage_project_id_col = cast(InstrumentedAttribute[int], cast(object, Stage.project_id))
+    stage_name_col = cast(InstrumentedAttribute[str], cast(object, Stage.name))
+    stage_created_at_col = cast(InstrumentedAttribute[datetime], cast(object, Stage.created_at))
+    stage_id_col = cast(InstrumentedAttribute[int], cast(object, Stage.id))
+    artifact_stage_id_col = cast(InstrumentedAttribute[int], cast(object, Artifact.stage_id))
+    artifact_created_at_col = cast(
+        InstrumentedAttribute[datetime], cast(object, Artifact.created_at)
+    )
+
+    stage_res = await session.execute(
+        select(Stage)
+        .where(stage_project_id_col == project_id)
+        .where(stage_name_col.in_(TEXT_STAGE_ORDER))
+        .order_by(stage_created_at_col.asc(), stage_id_col.asc())
+    )
+    stages = stage_res.scalars().all()
+
+    artifact_res = await session.execute(
+        select(Artifact)
+        .join(Stage, artifact_stage_id_col == stage_id_col)
+        .where(stage_project_id_col == project_id)
+        .where(stage_name_col.in_(TEXT_STAGE_ORDER))
+        .order_by(artifact_created_at_col.asc())
+    )
+    artifacts = artifact_res.scalars().all()
+
+    latest_stage_by_name: dict[str, Stage] = {}
+    for stage in stages:
+        latest_stage_by_name[stage.name] = stage
+
+    latest_artifact_by_stage_id: dict[int, Artifact] = {}
+    for artifact in artifacts:
+        latest_artifact_by_stage_id[artifact.stage_id] = artifact
+
+    items: list[TextStageRead] = []
+    for index, stage_name in enumerate(TEXT_STAGE_ORDER, start=1):
+        stage = latest_stage_by_name.get(stage_name)
+        if stage is None:
+            continue
+        artifact = latest_artifact_by_stage_id.get(stage.id or 0)
+        items.append(
+            TextStageRead(
+                stage=stage.name,
+                name=(
+                    artifact.name
+                    if artifact is not None and artifact.name
+                    else TEXT_STAGE_DISPLAY_NAMES.get(stage.name, stage.name)
+                ),
+                status=stage.status,
+                order=index,
+                artifact_id=artifact.id if artifact is not None and artifact.id is not None else 0,
+                run_id=stage.run_id,
+                content=artifact.content if artifact is not None else None,
+                created_at=stage.created_at,
+                updated_at=artifact.updated_at if artifact is not None else stage.updated_at,
+            )
+        )
+    return items

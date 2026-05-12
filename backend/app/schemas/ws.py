@@ -28,6 +28,10 @@ WsEventType = Literal[
     "shot_deleted",
     "project_updated",
     "data_cleared",
+    "text_stage_started",
+    "text_stage_updated",
+    "text_stage_completed",
+    "text_stage_failed",
 ]
 
 
@@ -174,6 +178,17 @@ class ProjectUpdatedPayload(BaseModel):
 
 class ProjectUpdatedEventData(BaseModel):
     project: ProjectUpdatedPayload
+
+
+class TextStageEventData(BaseModel):
+    run_id: int | None = None
+    project_id: int | None = None
+    stage: str
+    name: str
+    status: str
+    order: int
+    artifact_id: int = 0
+    content: dict[str, Any] | None = None
 
 
 class WsEvent(BaseModel):

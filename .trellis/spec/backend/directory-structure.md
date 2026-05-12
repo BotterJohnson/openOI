@@ -28,6 +28,7 @@ backend/app/
 ├── main.py                  # FastAPI factory + lifespan + global handlers + /ws route
 ├── config.py                # Settings (pydantic-settings) + get_settings()
 ├── exceptions.py            # AppException hierarchy (mapped in main.py)
+├── logging_config.py        # Root logging setup: console + rotating file handlers
 │
 ├── api/
 │   ├── deps.py              # Shared deps: SessionDep, SettingsDep, AdminDep, WsManagerDep, require_run_id
@@ -119,5 +120,5 @@ Alembic migrations live in `backend/alembic/versions/` (note: `alembic.ini` defa
 - Cleanest API route example: `app/api/v1/routes/projects.py` — uses `SessionDep` / `SettingsDep`, delegates business logic to services, returns Pydantic schemas.
 - Cleanest service example: `app/services/project_deletion.py` (delete by id + batch delete, used by routes).
 - Cleanest model example: `app/models/project.py` — Project / Character / Shot with cascade relationships and approval-state helpers.
-- App lifecycle: `app/main.py` — `create_app()` factory, `lifespan` runs `init_db()`, exception handlers, `/ws/projects/{project_id}` route.
+- App lifecycle: `app/main.py` — `create_app()` factory, logging setup, `lifespan` runs `init_db()`, exception handlers, `/ws/projects/{project_id}` route.
 - Settings entry point: `app/config.py` — `Settings` with `model_config = SettingsConfigDict(extra="ignore")`, `get_settings()` lru-cached and reads `.env`.

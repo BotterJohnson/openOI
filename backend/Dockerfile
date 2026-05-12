@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir uv
 
 # Install deps first for better layer caching
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --extra agents --no-install-project
 
 COPY app ./app
 

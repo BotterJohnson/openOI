@@ -25,6 +25,7 @@ from app.schemas.ws import (
     ShotCreatedEventData,
     ShotDeletedEventData,
     ShotUpdatedEventData,
+    TextStageEventData,
     WsEvent,
 )
 
@@ -47,6 +48,10 @@ _EVENT_DATA_MODELS: dict[str, type[Any]] = {
     "project_updated": ProjectUpdatedEventData,
     "data_cleared": DataClearedEventData,
     "error": ErrorEventData,
+    "text_stage_started": TextStageEventData,
+    "text_stage_updated": TextStageEventData,
+    "text_stage_completed": TextStageEventData,
+    "text_stage_failed": TextStageEventData,
 }
 
 

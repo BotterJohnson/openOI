@@ -1037,6 +1037,61 @@ describe("useProjectWebSocket", () => {
     });
   });
 
+  it("stores text stage lifecycle events", () => {
+    const store = useEditorStore.getState();
+    store.reset();
+    store.setCurrentRunId(77);
+
+    applyWsEvent(
+      {
+        type: "text_stage_started",
+        data: {
+          run_id: 77,
+          stage: "text_story_outline",
+          name: "故事大纲",
+          status: "running",
+          order: 2,
+          artifact_id: 0,
+        },
+      } as WsEvent,
+      store,
+      noopAutoConfirm
+    );
+
+    applyWsEvent(
+      {
+        type: "text_stage_completed",
+        data: {
+          run_id: 77,
+          stage: "text_chapter_prose",
+          name: "故事正文",
+          status: "completed",
+          order: 5,
+          artifact_id: 901,
+          content: { prose: "暮色压住青岚宗外门。" },
+        },
+      } as WsEvent,
+      store,
+      noopAutoConfirm
+    );
+
+    expect(useEditorStore.getState().textStages).toEqual([
+      expect.objectContaining({
+        stage: "text_story_outline",
+        name: "故事大纲",
+        status: "running",
+        artifact_id: 0,
+      }),
+      expect.objectContaining({
+        stage: "text_chapter_prose",
+        name: "故事正文",
+        status: "completed",
+        artifact_id: 901,
+        content: { prose: "暮色压住青岚宗外门。" },
+      }),
+    ]);
+  });
+
   it("handles run_cancelled with run_ids field", () => {
     const store = useEditorStore.getState();
     store.reset();

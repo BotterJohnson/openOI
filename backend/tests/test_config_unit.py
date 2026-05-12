@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from app.config import Settings, apply_settings_overrides, get_settings
+from app.config import (
+    DEFAULT_ENV_FILE,
+    Settings,
+    apply_settings_overrides,
+    get_settings,
+    resolve_settings_env_file,
+)
 
 
 # --- anthropic_env ---
@@ -127,6 +133,19 @@ def test_apply_settings_overrides_updates_field(monkeypatch):
         assert get_settings().app_name == "TestOverride"
     finally:
         settings.app_name = original_app_name
+
+
+def test_resolve_settings_env_file_defaults_to_backend_env(monkeypatch):
+    monkeypatch.delenv("ENV_FILE", raising=False)
+
+    assert resolve_settings_env_file() == DEFAULT_ENV_FILE
+
+
+def test_resolve_settings_env_file_allows_override(monkeypatch, tmp_path):
+    env_path = tmp_path / "custom.env"
+    monkeypatch.setenv("ENV_FILE", str(env_path))
+
+    assert resolve_settings_env_file() == env_path
 
 
 # --- enable_image_to_video property ---

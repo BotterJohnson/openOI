@@ -4,9 +4,12 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
+from app.models.artifact import Artifact
 from app.models.agent_run import AgentMessage, AgentRun
 from app.models.message import Message
 from app.models.project import Character, Project, Shot
+from app.models.run import Run
+from app.models.stage import Stage
 from app.services import project_deletion
 from tests.factories import (
     create_agent_message,
@@ -36,6 +39,22 @@ async def test_delete_project_by_id_removes_related_rows_and_files(test_session,
         image_url="/static/shots/shot.png",
         video_url="/static/videos/shot.mp4",
     )
+    lineage_run = await create_run(test_session, project_id=project.id, status="running")
+    stage = Stage(project_id=project.id, run_id=lineage_run.id, name="text_story_outline", status="completed")
+    test_session.add(stage)
+    await test_session.commit()
+    await test_session.refresh(stage)
+    artifact = Artifact(
+        project_id=project.id,
+        run_id=lineage_run.id,
+        stage_id=stage.id,
+        name="故事大纲",
+        artifact_type="text",
+        uri="db://artifact/text_story_outline",
+        content={"title": "测试"},
+    )
+    test_session.add(artifact)
+    await test_session.commit()
 
     deleted_single: list[str | None] = []
     deleted_batches: list[list[str | None]] = []
@@ -61,6 +80,9 @@ async def test_delete_project_by_id_removes_related_rows_and_files(test_session,
     assert (await test_session.execute(select(Message))).scalars().all() == []
     assert (await test_session.execute(select(AgentMessage))).scalars().all() == []
     assert (await test_session.execute(select(AgentRun))).scalars().all() == []
+    assert (await test_session.execute(select(Run))).scalars().all() == []
+    assert (await test_session.execute(select(Stage))).scalars().all() == []
+    assert (await test_session.execute(select(Artifact))).scalars().all() == []
 
 
 @pytest.mark.asyncio

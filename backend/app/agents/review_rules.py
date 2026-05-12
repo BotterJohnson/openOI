@@ -132,10 +132,16 @@ class ReviewRuleEngine(BaseAgent):
                 parts.append(f"{len(target_ids.shot_ids)} 个分镜")
             target_info = f"（仅处理 {', '.join(parts)}）"
 
+        stage_labels = {
+            "plan": "规划",
+            "render": "渲染",
+            "compose": "合成",
+        }
+        stage_label = stage_labels.get(start_agent, start_agent)
         await self.send_message(
             ctx,
-            f"已收到反馈。将从 {start_agent} 阶段开始{mode_desc}{target_info}。",
-            summary="已收到反馈",
+            f"已收到反馈。正在立即更新{stage_label}阶段内容{target_info}。",
+            summary="正在处理你的修改意见",
         )
 
         return {

@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import os
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_ENV_FILE = BACKEND_DIR / ".env"
+
+
+def resolve_settings_env_file() -> Path:
+    env_file = os.getenv("ENV_FILE")
+    if env_file:
+        return Path(env_file)
+    return DEFAULT_ENV_FILE
 
 
 class Settings(BaseSettings):
@@ -15,6 +27,11 @@ class Settings(BaseSettings):
     app_name: str = "openOii-backend"
     environment: str = Field(default="dev", description="dev|staging|prod")
     log_level: str = Field(default="INFO", description="Uvicorn log level")
+    log_to_file: bool = Field(default=True, description="Whether to write rotating log files")
+    log_dir: str = Field(default="logs", description="Directory for backend log files")
+    log_file: str = Field(default="openoii.log", description="Primary backend log filename")
+    log_max_bytes: int = Field(default=10 * 1024 * 1024, description="Max bytes per log file")
+    log_backup_count: int = Field(default=5, description="Number of rotated log files to keep")
 
     api_v1_prefix: str = "/api/v1"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
@@ -234,4 +251,4 @@ def apply_settings_overrides(overrides: dict[str, Any]) -> None:
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings(_env_file=".env", _env_file_encoding="utf-8")
+    return Settings(_env_file=resolve_settings_env_file(), _env_file_encoding="utf-8")

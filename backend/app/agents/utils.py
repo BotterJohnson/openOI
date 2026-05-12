@@ -78,9 +78,18 @@ def extract_json(text: str) -> dict:
     # 尝试多种修复策略
     for fix_func in [
         lambda x: x,  # 原样尝试
+        _remove_suspect_ellipsis,  # 去掉模型常见的裸省略号占位
         _fix_common_json_errors,  # 修复常见错误
+        _escape_suspect_inner_quotes,  # 修复字符串内部未转义的双引号
         _try_fix_incomplete_json,  # 修复不完整 JSON
-        lambda x: _try_fix_incomplete_json(_fix_common_json_errors(x)),  # 组合修复
+        lambda x: _fix_common_json_errors(_remove_suspect_ellipsis(x)),
+        lambda x: _escape_suspect_inner_quotes(_remove_suspect_ellipsis(x)),
+        lambda x: _try_fix_incomplete_json(_remove_suspect_ellipsis(x)),
+        lambda x: _escape_suspect_inner_quotes(_fix_common_json_errors(x)),
+        lambda x: _try_fix_incomplete_json(_escape_suspect_inner_quotes(x)),
+        lambda x: _try_fix_incomplete_json(
+            _escape_suspect_inner_quotes(_fix_common_json_errors(x))
+        ),  # 组合修复
     ]:
         try:
             fixed = fix_func(json_text)
@@ -173,6 +182,97 @@ def _fix_common_json_errors(text: str) -> str:
     text = re.sub(r'(true|false|null)\s*\n\s*"', r'\1,\n"', text)
 
     return text
+
+
+def _remove_suspect_ellipsis(text: str) -> str:
+    """移除 JSON 外部的省略号占位符。"""
+    chars = list(text)
+    result: list[str] = []
+    in_string = False
+    escape_next = False
+    idx = 0
+
+    while idx < len(chars):
+        char = chars[idx]
+
+        if escape_next:
+            result.append(char)
+            escape_next = False
+            idx += 1
+            continue
+
+        if char == "\\":
+            result.append(char)
+            escape_next = True
+            idx += 1
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            result.append(char)
+            idx += 1
+            continue
+
+        if not in_string and (
+            char == "…" or (char == "." and idx + 2 < len(chars) and chars[idx : idx + 3] == [".", ".", "."])
+        ):
+            idx += 3 if char == "." else 1
+            continue
+
+        result.append(char)
+        idx += 1
+
+    return "".join(result)
+
+
+def _escape_suspect_inner_quotes(text: str) -> str:
+    """转义 JSON 字符串值中误生成的裸双引号。
+
+    规则：
+    - 只在字符串内部处理；
+    - 如果当前双引号后面的下一个非空白字符不是 JSON 合法结束符
+      （逗号 / 右花括号 / 右方括号 / 冒号），则视为内容中的误引号并转义。
+    """
+    chars = list(text)
+    result: list[str] = []
+    in_string = False
+    escape_next = False
+
+    for idx, char in enumerate(chars):
+        if escape_next:
+            result.append(char)
+            escape_next = False
+            continue
+
+        if char == "\\":
+            result.append(char)
+            escape_next = True
+            continue
+
+        if char != '"':
+            result.append(char)
+            continue
+
+        if not in_string:
+            in_string = True
+            result.append(char)
+            continue
+
+        next_non_ws = ""
+        for next_idx in range(idx + 1, len(chars)):
+            candidate = chars[next_idx]
+            if not candidate.isspace():
+                next_non_ws = candidate
+                break
+
+        if next_non_ws in {",", "}", "]", ":"} or next_non_ws == "":
+            in_string = False
+            result.append(char)
+            continue
+
+        result.append('\\"')
+
+    return "".join(result)
 
 
 def _try_fix_incomplete_json(text: str) -> str:

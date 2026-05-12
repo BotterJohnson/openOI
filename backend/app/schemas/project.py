@@ -198,10 +198,12 @@ class GenerateRequest(BaseModel):
     seed: int | None = None
     notes: str | None = None
     auto_mode: bool = False
+    start_stage: Literal["plan", "render", "compose"] | None = None
 
 
 class ResumeRequest(BaseModel):
     run_id: int
+    auto_mode: bool = False
 
 
 class AgentRunRead(BaseModel):
@@ -270,6 +272,18 @@ class MessageRead(BaseModel):
     progress: float | None
     is_loading: bool
     created_at: datetime
+
+
+class TextStageRead(BaseModel):
+    stage: str
+    name: str
+    status: str
+    order: int
+    artifact_id: int
+    run_id: int
+    content: dict[str, object] | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class AssetCreate(BaseModel):

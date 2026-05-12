@@ -10,7 +10,7 @@ class ConfigItemRead(BaseModel):
     value: str | None
     is_sensitive: bool
     is_masked: bool
-    source: Literal["db", "env"]
+    source: Literal["db", "env", "default"]
 
 
 class ConfigUpdateRequest(BaseModel):

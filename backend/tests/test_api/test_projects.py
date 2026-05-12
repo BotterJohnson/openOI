@@ -6,7 +6,10 @@ from httpx import ASGITransport, AsyncClient
 from app.api.deps import get_app_settings, get_db_session, get_ws_manager
 from app.api.v1.routes import projects as project_routes
 from app.main import create_app
+from app.models.artifact import Artifact
 from app.models.project import Project
+from app.models.run import Run
+from app.models.stage import Stage
 from app.schemas.project import ProjectProviderEntry, ProviderResolution
 from app.services.provider_resolution import resolve_project_provider_settings
 from tests.factories import create_message, create_project, create_run
@@ -318,6 +321,74 @@ async def test_get_project_messages(async_client, test_session):
     assert len(data) == 1
     assert data[0]["project_id"] == project.id
     assert data[0]["content"] == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_get_project_text_stages(async_client, test_session):
+    project = await create_project(test_session, title="修仙", story="修仙")
+    run = Run(project_id=project.id, thread_id="agent-run-1", status="running")
+    test_session.add(run)
+    await test_session.flush()
+    stage = Stage(
+        project_id=project.id,
+        run_id=run.id,
+        name="text_chapter_prose",
+        status="completed",
+        source="text_pipeline",
+    )
+    test_session.add(stage)
+    await test_session.flush()
+    test_session.add(
+        Artifact(
+            project_id=project.id,
+            run_id=run.id,
+            stage_id=stage.id,
+            name="故事正文",
+            artifact_type="text",
+            uri="db://artifact/text_chapter_prose",
+            content={"prose": "暮色压住青岚宗外门。"},
+            source="llm",
+        )
+    )
+    await test_session.commit()
+
+    res = await async_client.get(f"/api/v1/projects/{project.id}/text-stages")
+
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    assert data[0]["stage"] == "text_chapter_prose"
+    assert data[0]["name"] == "故事正文"
+    assert data[0]["content"]["prose"] == "暮色压住青岚宗外门。"
+
+
+@pytest.mark.asyncio
+async def test_get_project_text_stages_includes_running_stage_without_artifact(
+    async_client, test_session
+):
+    project = await create_project(test_session, title="修仙", story="修仙")
+    run = Run(project_id=project.id, thread_id="agent-run-2", status="running")
+    test_session.add(run)
+    await test_session.flush()
+    stage = Stage(
+        project_id=project.id,
+        run_id=run.id,
+        name="text_story_outline",
+        status="running",
+        source="text_pipeline",
+    )
+    test_session.add(stage)
+    await test_session.commit()
+
+    res = await async_client.get(f"/api/v1/projects/{project.id}/text-stages")
+
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    assert data[0]["stage"] == "text_story_outline"
+    assert data[0]["status"] == "running"
+    assert data[0]["artifact_id"] == 0
+    assert data[0]["content"] is None
 
 
 @pytest.mark.asyncio

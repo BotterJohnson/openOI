@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProjectPage } from './ProjectPage';
 import { projectsApi } from '~/services/api';
-import type { AgentRun, Project, RecoveryControlRead } from '~/types';
+import type { AgentRun, Project, RecoveryControlRead, TextStage } from '~/types';
 import { ApiError } from '~/types/errors';
 import { toast } from '~/utils/toast';
 
@@ -97,6 +97,8 @@ const projectDataWithDegradedTextProvider: Project = {
 const emptyCharacters: never[] = [];
 const emptyShots: never[] = [];
 const emptyMessages: never[] = [];
+const emptyTextStages: never[] = [];
+let currentTextStages: TextStage[] = [];
 const storeState: {
   isGenerating: boolean;
   progress: number;
@@ -112,9 +114,11 @@ const storeState: {
   projectUpdatedAt: number | null;
   characters: never[];
   shots: never[];
+  textStages: never[];
   projectVideoUrl: string | null;
   messages: never[];
   clearMessages: ReturnType<typeof vi.fn>;
+  clearTextStages: ReturnType<typeof vi.fn>;
   setGenerating: ReturnType<typeof vi.fn>;
   setProgress: ReturnType<typeof vi.fn>;
   setCurrentAgent: ReturnType<typeof vi.fn>;
@@ -128,6 +132,7 @@ const storeState: {
   setProjectVideoUrl: ReturnType<typeof vi.fn>;
   setCharacters: ReturnType<typeof vi.fn>;
   setShots: ReturnType<typeof vi.fn>;
+  setTextStages: ReturnType<typeof vi.fn>;
   setRecoveryControl: ReturnType<typeof vi.fn>;
   setRecoverySummary: ReturnType<typeof vi.fn>;
   setRecoveryGate: ReturnType<typeof vi.fn>;
@@ -151,9 +156,11 @@ const storeState: {
   projectUpdatedAt: null as number | null,
   characters: emptyCharacters,
   shots: emptyShots,
+  textStages: emptyTextStages,
   projectVideoUrl: null,
   messages: emptyMessages,
   clearMessages: vi.fn(),
+  clearTextStages: vi.fn(),
   setGenerating: vi.fn(),
   setProgress: vi.fn(),
   setCurrentAgent: vi.fn(),
@@ -167,6 +174,7 @@ const storeState: {
   setProjectVideoUrl: vi.fn(),
   setCharacters: vi.fn(),
   setShots: vi.fn(),
+  setTextStages: vi.fn(),
   setRecoveryControl: vi.fn(),
   setRecoverySummary: vi.fn(),
   setRecoveryGate: vi.fn(),
@@ -181,6 +189,10 @@ const storeState: {
 const mutateSpy = vi.fn();
 const sendMock = vi.fn();
 let mutationPendingStates: boolean[] = [];
+
+function getWorkspaceGenerateButton() {
+  return screen.getAllByRole('button', { name: '开始生成' })[0];
+}
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -225,6 +237,10 @@ vi.mock('@tanstack/react-query', () => ({
       return { data: emptyMessages, isLoading: false, error: null };
     }
 
+    if (queryKey[0] === 'text-stages') {
+      return { data: currentTextStages, isLoading: false, error: null };
+    }
+
     return { data: undefined, isLoading: false, error: null };
   },
   useMutation: (options: {
@@ -257,6 +273,13 @@ vi.mock('~/hooks/useWebSocket', () => ({
     disconnect: vi.fn(),
     reconnect: vi.fn(),
   }),
+}));
+
+vi.mock('~/stores/chatPanelStore', () => ({
+  useChatPanelStore: (selector?: (state: { open: () => void }) => unknown) => {
+    const state = { open: vi.fn() };
+    return selector ? selector(state) : state;
+  },
 }));
 
 vi.mock('~/stores/editorStore', () => ({
@@ -374,6 +397,8 @@ describe('ProjectPage live hydration', () => {
     currentSearchParams = new URLSearchParams();
     projectQueryState = { isLoading: false, error: null };
     currentProjectData = projectData;
+    currentTextStages = [];
+    storeState.runMode = 'manual';
     storeState.isGenerating = true;
     storeState.progress = 0.35;
     storeState.currentStage = 'storyboard';
@@ -542,14 +567,26 @@ describe('ProjectPage live hydration', () => {
 
   it('shows degraded provider warning without disabling generate', () => {
     currentProjectData = projectDataWithDegradedTextProvider;
+    storeState.isGenerating = false;
+    storeState.currentRunId = null;
 
     render(<ProjectPage />);
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '开始生成' })).toBeEnabled();
+    expect(getWorkspaceGenerateButton()).toBeEnabled();
+  });
+
+  it('shows main workspace controls directly on the page', () => {
+    render(<ProjectPage />);
+
+    expect(screen.getByText('文本生成工作台')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '下一步' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '开始生成' }).length).toBeGreaterThan(0);
   });
 
   it('keeps generate enabled when only the video provider is invalid', () => {
+    storeState.isGenerating = false;
+    storeState.currentRunId = null;
     currentProjectData = {
       ...projectData,
       provider_settings: {
@@ -568,7 +605,7 @@ describe('ProjectPage live hydration', () => {
     render(<ProjectPage />);
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '开始生成' })).toBeEnabled();
+    expect(getWorkspaceGenerateButton()).toBeEnabled();
   });
 
   it('renders the loading page while the project query is loading', () => {
@@ -647,7 +684,10 @@ describe('ProjectPage live hydration', () => {
     render(<ProjectPage />);
 
     await waitFor(() => {
-      expect(projectsApi.generate).toHaveBeenCalledWith(9, { auto_mode: false });
+      expect(projectsApi.generate).toHaveBeenCalledWith(9, {
+        auto_mode: false,
+        start_stage: 'plan',
+      });
     });
     expect(setSearchParams).toHaveBeenCalledWith({}, { replace: true });
   });
@@ -767,7 +807,7 @@ describe('ProjectPage live hydration', () => {
     await user.click(screen.getByRole('button', { name: '恢复运行' }));
 
     await waitFor(() => {
-      expect(projectsApi.resume).toHaveBeenCalledWith(9, 17);
+      expect(projectsApi.resume).toHaveBeenCalledWith(9, 17, false);
     });
     expect(storeState.setGenerating).toHaveBeenCalledWith(true);
     expect(storeState.setCurrentRunId).toHaveBeenCalledWith(55);
@@ -884,10 +924,13 @@ describe('ProjectPage live hydration', () => {
     render(<ProjectPage />);
     vi.clearAllMocks();
 
-    await user.click(screen.getByRole('button', { name: '开始生成' }));
+    await user.click(getWorkspaceGenerateButton());
 
     await waitFor(() => {
-      expect(projectsApi.generate).toHaveBeenCalledWith(9, { auto_mode: false });
+      expect(projectsApi.generate).toHaveBeenCalledWith(9, {
+        auto_mode: false,
+        start_stage: 'plan',
+      });
     });
     expect(storeState.clearMessages).toHaveBeenCalled();
     expect(storeState.setCurrentStage).toHaveBeenCalledWith('plan');
@@ -927,7 +970,7 @@ describe('ProjectPage live hydration', () => {
 
     const { rerender } = render(<ProjectPage />);
 
-    await user.click(screen.getByRole('button', { name: '开始生成' }));
+    await user.click(getWorkspaceGenerateButton());
 
     storeState.isGenerating = true;
     storeState.currentRunId = 321;
@@ -978,7 +1021,7 @@ describe('ProjectPage live hydration', () => {
 
     render(<ProjectPage />);
 
-    await user.click(screen.getByRole('button', { name: '开始生成' }));
+    await user.click(getWorkspaceGenerateButton());
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
@@ -1035,7 +1078,7 @@ describe('ProjectPage live hydration', () => {
 
     render(<ProjectPage />);
 
-    await user.click(screen.getByRole('button', { name: '开始生成' }));
+    await user.click(getWorkspaceGenerateButton());
 
     await waitFor(() => {
       expect(storeState.setRecoveryControl).toHaveBeenCalledWith(control);
@@ -1045,6 +1088,60 @@ describe('ProjectPage live hydration', () => {
     expect(storeState.setGenerating).toHaveBeenCalledWith(true);
     expect(storeState.setCurrentAgent).toHaveBeenCalledWith('plan');
     expect(storeState.setProgress).toHaveBeenCalledWith(0.22);
+  });
+
+  it('auto-resumes recoverable conflicts in yolo mode', async () => {
+    const user = userEvent.setup();
+    storeState.isGenerating = false;
+    storeState.runMode = 'yolo';
+
+    const control: RecoveryControlRead = {
+      state: 'recoverable',
+      detail: '可以继续执行',
+      available_actions: ['resume', 'cancel'],
+      thread_id: 'thread-yolo',
+      active_run: {
+        id: 202,
+        project_id: 9,
+        status: 'failed',
+        current_agent: 'compose',
+        progress: 0.88,
+        error: 'video missing',
+        resource_type: null,
+        resource_id: null,
+        thread_id: null,
+        created_at: '2026-04-11T00:00:00Z',
+        updated_at: '2026-04-11T00:00:00Z',
+      },
+      recovery_summary: {
+        project_id: 9,
+        run_id: 202,
+        thread_id: 'thread-yolo',
+        current_stage: 'compose',
+        next_stage: 'compose',
+        preserved_stages: ['plan', 'render'],
+        stage_history: [],
+        resumable: true,
+      },
+    };
+
+    vi.mocked(projectsApi.generate).mockRejectedValueOnce(
+      new ApiError({
+        code: 'conflict',
+        message: '409 conflict',
+        status: 409,
+        response: control,
+      })
+    );
+
+    render(<ProjectPage />);
+
+    await user.click(getWorkspaceGenerateButton());
+
+    await waitFor(() => {
+      expect(projectsApi.resume).toHaveBeenCalledWith(9, 202, true);
+    });
+    expect(storeState.setRecoveryControl).toHaveBeenCalledWith(control);
   });
 
   it('shows a warning toast when generate 409 does not include recovery control', async () => {
@@ -1061,7 +1158,7 @@ describe('ProjectPage live hydration', () => {
 
     render(<ProjectPage />);
 
-    await user.click(screen.getByRole('button', { name: '开始生成' }));
+    await user.click(getWorkspaceGenerateButton());
 
     await waitFor(() => {
       expect(toast.warning).toHaveBeenCalledWith(
@@ -1073,9 +1170,119 @@ describe('ProjectPage live hydration', () => {
     });
   });
 
+  it('preserves newer local text stage state when fetched text stages are older', async () => {
+    storeState.textStages = [
+      {
+        stage: 'text_story_outline',
+        name: '故事大纲',
+        status: 'running',
+        order: 2,
+        artifact_id: 0,
+        run_id: 77,
+        content: null,
+        updated_at: '2026-05-12T17:02:05Z',
+      },
+      {
+        stage: 'text_chapter_prose',
+        name: '故事正文',
+        status: 'completed',
+        order: 5,
+        artifact_id: 901,
+        run_id: 77,
+        content: { prose: '实时正文' },
+        updated_at: '2026-05-12T17:02:08Z',
+      },
+    ] as never;
+    currentTextStages = [
+      {
+        stage: 'text_story_outline',
+        name: '故事大纲',
+        status: 'pending',
+        order: 2,
+        artifact_id: 0,
+        run_id: 77,
+        content: null,
+        updated_at: '2026-05-12T17:02:01Z',
+      },
+      {
+        stage: 'text_chapter_prose',
+        name: '故事正文',
+        status: 'pending',
+        order: 5,
+        artifact_id: 0,
+        run_id: 77,
+        content: null,
+        updated_at: '2026-05-12T17:02:01Z',
+      },
+      {
+        stage: 'text_video_prompts',
+        name: '视频提示词',
+        status: 'pending',
+        order: 7,
+        artifact_id: 0,
+        run_id: 77,
+        content: null,
+        updated_at: '2026-05-12T17:02:01Z',
+      },
+    ];
+
+    render(<ProjectPage />);
+
+    await waitFor(() => {
+      expect(storeState.setTextStages).toHaveBeenCalledWith([
+        expect.objectContaining({
+          stage: 'text_story_outline',
+          status: 'running',
+        }),
+        expect.objectContaining({
+          stage: 'text_chapter_prose',
+          status: 'completed',
+          artifact_id: 901,
+          content: { prose: '实时正文' },
+        }),
+        expect.objectContaining({
+          stage: 'text_video_prompts',
+          status: 'pending',
+        }),
+      ]);
+    });
+  });
+
+  it('advances to the next stage with start_stage payload', async () => {
+    const user = userEvent.setup();
+    storeState.isGenerating = false;
+    storeState.currentStage = 'plan';
+    vi.mocked(projectsApi.generate).mockResolvedValueOnce({
+      id: 11,
+      project_id: 9,
+      status: 'running',
+      current_agent: 'render',
+      progress: 0,
+      error: null,
+      thread_id: null,
+      resource_type: null,
+      resource_id: null,
+      provider_snapshot: providerSnapshotSample,
+      created_at: '2026-04-11T00:00:00Z',
+      updated_at: '2026-04-11T00:00:00Z',
+    } satisfies AgentRun);
+
+    render(<ProjectPage />);
+
+    await user.click(screen.getByRole('button', { name: '下一步' }));
+
+    await waitFor(() => {
+      expect(projectsApi.generate).toHaveBeenCalledWith(9, {
+        auto_mode: false,
+        start_stage: 'render',
+      });
+    });
+  });
+
   it('handles feedback conflict and generic error paths', async () => {
     const user = userEvent.setup();
     storeState.isGenerating = false;
+    storeState.currentStage = 'compose';
 
     vi.mocked(projectsApi.feedback).mockRejectedValueOnce(
       new ApiError({
@@ -1088,6 +1295,15 @@ describe('ProjectPage live hydration', () => {
     render(<ProjectPage />);
 
     await user.click(screen.getByRole('button', { name: '发送反馈' }));
+
+    await waitFor(() => {
+      expect(projectsApi.feedback).toHaveBeenCalledWith(
+        9,
+        '继续调整故事节奏',
+        undefined,
+        'compose',
+      );
+    });
 
     await waitFor(() => {
       expect(toast.info).toHaveBeenCalledWith({

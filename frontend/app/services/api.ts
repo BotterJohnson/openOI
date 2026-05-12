@@ -4,9 +4,11 @@ import type {
 	Character,
 	CharacterUpdatePayload,
 	CreateProjectPayload,
+	GenerateProjectPayload,
 	Project,
 	Shot,
 	ShotUpdatePayload,
+	TextStage,
 	UpdateProjectPayload,
 } from "~/types";
 
@@ -202,9 +204,12 @@ export const projectsApi = {
 	getMessages: (id: number) =>
 		fetchApi<import("~/types").Message[]>(`/api/v1/projects/${id}/messages`),
 
+	getTextStages: (id: number) =>
+		fetchApi<TextStage[]>(`/api/v1/projects/${id}/text-stages`),
+
 	generate: (
 		id: number,
-		data?: { seed?: number; notes?: string; auto_mode?: boolean },
+		data?: GenerateProjectPayload,
 	) =>
 		fetchApi<import("~/types").AgentRun>(`/api/v1/projects/${id}/generate`, {
 			method: "POST",
@@ -219,10 +224,10 @@ export const projectsApi = {
 			},
 		),
 
-	resume: (id: number, runId: number) =>
+	resume: (id: number, runId: number, autoMode = false) =>
 		fetchApi<import("~/types").AgentRun>(`/api/v1/projects/${id}/resume`, {
 			method: "POST",
-			body: JSON.stringify({ run_id: runId }),
+			body: JSON.stringify({ run_id: runId, auto_mode: autoMode }),
 		}),
 
 	feedback: (

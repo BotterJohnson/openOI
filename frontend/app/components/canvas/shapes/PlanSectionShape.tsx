@@ -11,12 +11,92 @@ import type {
 	ReviewedCharacter,
 	ReviewedShot,
 } from "./types";
+import type { TextStage } from "~/types";
 import { SectionShell } from "./SectionShell";
 import {
 	getWorkspaceSectionPlaceholderText,
 	getWorkspaceSectionStatusLabel,
 } from "~/utils/workspaceStatus";
 import { useDomSize, getShapeSize } from "~/hooks/useDomSize";
+
+function stringifyValue(value: unknown): string {
+	if (value === null || value === undefined) return "";
+	if (typeof value === "string") return value;
+	if (typeof value === "number" || typeof value === "boolean") {
+		return String(value);
+	}
+	return JSON.stringify(value, null, 2);
+}
+
+function stagePreview(stage: TextStage): string {
+	const content = stage.content ?? {};
+	const candidates = [
+		content.logline,
+		content.premise,
+		content.main_conflict,
+		content.arrangement,
+		content.prose,
+		content.plot_flow,
+		content.storyboard_script,
+		content.video_prompts,
+		content.warnings,
+	];
+	const first = candidates.find((value) => {
+		if (Array.isArray(value)) return value.length > 0;
+		return Boolean(stringifyValue(value).trim());
+	});
+	const text = stringifyValue(first);
+	return text.length > 360 ? `${text.slice(0, 360)}...` : text;
+}
+
+function stageHint(stage: TextStage): string | null {
+	if (stage.stage === "text_storyboard") {
+		return "规划稿分镜，不是独立执行接口";
+	}
+	if (stage.stage === "text_video_prompts") {
+		return "规划稿提示词，不是独立执行接口";
+	}
+	return null;
+}
+
+function TextStagePanel({ stage }: { stage: TextStage }) {
+	const preview = stagePreview(stage);
+	const isWarning =
+		stage.status === "needs_review" ||
+		(stage.content?.status && stage.content.status !== "passed");
+	const hint = stageHint(stage);
+
+	return (
+		<div className="rounded-lg border border-base-content/10 bg-base-100 p-3">
+			<div className="mb-2 flex items-center justify-between gap-3">
+				<div className="min-w-0">
+					<p className="m-0 text-sm font-semibold text-base-content">
+						{stage.order}. {stage.name}
+					</p>
+					{hint && (
+						<p className="m-0 mt-1 text-[11px] text-base-content/45">{hint}</p>
+					)}
+				</div>
+				<span
+					className={`shrink-0 rounded px-2 py-0.5 text-[11px] ${
+						isWarning
+							? "bg-warning/15 text-warning"
+							: "bg-success/10 text-success"
+					}`}
+				>
+					{isWarning ? "需复核" : "已完成"}
+				</span>
+			</div>
+			{preview ? (
+				<pre className="m-0 max-h-32 overflow-hidden whitespace-pre-wrap break-words text-xs leading-relaxed text-base-content/65">
+					{preview}
+				</pre>
+			) : (
+				<p className="m-0 text-xs text-base-content/45">等待该环节产物</p>
+			)}
+		</div>
+	);
+}
 
 export class PlanSectionShapeUtil extends ShapeUtil<PlanSectionShape> {
 	static override type = "plan-section" as const;
@@ -29,6 +109,7 @@ export class PlanSectionShapeUtil extends ShapeUtil<PlanSectionShape> {
 		summary: T.string,
 		characters: T.any,
 		shots: T.any,
+		textStages: T.any,
 		sectionState: T.string,
 		placeholder: T.boolean,
 		statusLabel: T.string,
@@ -44,6 +125,7 @@ export class PlanSectionShapeUtil extends ShapeUtil<PlanSectionShape> {
 			summary: "",
 			characters: [],
 			shots: [],
+			textStages: [],
 			sectionState: "draft",
 			placeholder: true,
 			statusLabel: getWorkspaceSectionStatusLabel("draft"),
@@ -77,6 +159,7 @@ export class PlanSectionShapeUtil extends ShapeUtil<PlanSectionShape> {
 			summary,
 			characters,
 			shots,
+			textStages,
 			placeholder,
 			placeholderText,
 			statusLabel,
@@ -84,6 +167,7 @@ export class PlanSectionShapeUtil extends ShapeUtil<PlanSectionShape> {
 		const ref = useDomSize(shape, this.editor ?? null);
 		const typedCharacters = characters as ReviewedCharacter[];
 		const typedShots = shots as ReviewedShot[];
+		const typedTextStages = textStages as TextStage[];
 
 		return (
 			<HTMLContainer
@@ -98,7 +182,14 @@ export class PlanSectionShapeUtil extends ShapeUtil<PlanSectionShape> {
 						placeholderText={placeholderText}
 					>
 						<div className="space-y-4">
-							{(story || summary) && (
+							{typedTextStages.length > 0 && (
+								<div className="grid grid-cols-1 gap-3">
+									{typedTextStages.map((stage) => (
+										<TextStagePanel key={stage.stage} stage={stage} />
+									))}
+								</div>
+							)}
+							{typedTextStages.length === 0 && (story || summary) && (
 								<div className="rounded-xl bg-secondary/10 p-4">
 									{story && (
 										<p className="m-0 whitespace-pre-wrap text-sm leading-relaxed text-base-content/80">

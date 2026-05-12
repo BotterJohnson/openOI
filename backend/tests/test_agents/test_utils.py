@@ -6,6 +6,7 @@ from app.agents.utils import (
     build_character_context,
     extract_json,
     _extract_first_complete_json,
+    _escape_suspect_inner_quotes,
     _fix_common_json_errors,
     _try_fix_incomplete_json,
 )
@@ -188,6 +189,18 @@ class TestFixCommonJsonErrors:
         assert 'true,\n"key"' in result
 
 
+class TestEscapeSuspectInnerQuotes:
+    def test_escapes_unescaped_quotes_inside_string_value(self):
+        text = '{"user_message": "这是一个关于"灭灵之体"的修仙故事"}'
+        result = _escape_suspect_inner_quotes(text)
+        assert result == '{"user_message": "这是一个关于\\"灭灵之体\\"的修仙故事"}'
+
+    def test_keeps_valid_json_structure_quotes(self):
+        text = '{"agent": "plan", "score": 1}'
+        result = _escape_suspect_inner_quotes(text)
+        assert result == text
+
+
 class TestBuildCharacterContext:
     def test_with_description(self):
         chars = [SimpleNamespace(name="Alice", description="brave warrior")]
@@ -228,3 +241,34 @@ class TestExtractJsonThinkTag:
         text = '<thinking>{"wrong": true}</thinking>{"correct": true}'
         result = extract_json(text)
         assert result == {"correct": True}
+
+    def test_extract_json_repairs_unescaped_quotes_in_string_value(self):
+        text = """
+        {
+          "agent": "plan",
+          "user_message": "这是一个关于"灭灵之体"的修仙故事",
+          "project_update": {
+            "title": "灭灵",
+            "status": "planning"
+          }
+        }
+        """
+        result = extract_json(text)
+        assert result["agent"] == "plan"
+        assert result["project_update"]["title"] == "灭灵"
+        assert result["user_message"] == '这是一个关于"灭灵之体"的修仙故事'
+
+    def test_extract_json_repairs_ellipsis_truncation(self):
+        text = """
+        {
+          "agent": "plan",
+          "project_update": {
+            "title": "逆尘仙途",
+            "status": "planning"
+          },
+          ...
+        }
+        """
+        result = extract_json(text)
+        assert result["agent"] == "plan"
+        assert result["project_update"]["title"] == "逆尘仙途"

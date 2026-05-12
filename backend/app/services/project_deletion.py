@@ -8,8 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.models.agent_run import AgentMessage, AgentRun
+from app.models.artifact import Artifact
 from app.models.message import Message
 from app.models.project import Character, Project, Shot
+from app.models.run import Run
+from app.models.stage import Stage
 from app.services.file_cleaner import delete_file, delete_files
 
 
@@ -49,6 +52,14 @@ async def delete_project_data(session: AsyncSession, project_id: int) -> None:
     agent_message_run_id_col = cast(
         InstrumentedAttribute[int | None], cast(object, AgentMessage.run_id)
     )
+    run_project_id_col = cast(InstrumentedAttribute[int], cast(object, Run.project_id))
+    stage_project_id_col = cast(InstrumentedAttribute[int], cast(object, Stage.project_id))
+    artifact_project_id_col = cast(InstrumentedAttribute[int], cast(object, Artifact.project_id))
+
+    await session.execute(delete(Artifact).where(artifact_project_id_col == project_id))
+    await session.execute(delete(Stage).where(stage_project_id_col == project_id))
+    await session.execute(delete(Run).where(run_project_id_col == project_id))
+
     run_ids_subq = select(agent_run_id_col).where(agent_run_project_id_col == project_id)
     await session.execute(delete(AgentMessage).where(agent_message_run_id_col.in_(run_ids_subq)))
     await session.execute(delete(AgentRun).where(agent_run_project_id_col == project_id))

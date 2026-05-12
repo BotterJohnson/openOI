@@ -2311,12 +2311,8 @@ dependencies = [
     { name = "fastapi" },
     { name = "greenlet" },
     { name = "httpx" },
-    { name = "insightface" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
-    { name = "onnxruntime", version = "1.24.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "onnxruntime", version = "1.25.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "opencv-python-headless" },
     { name = "pillow" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "psycopg2-binary" },
@@ -2326,6 +2322,14 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "sqlmodel" },
     { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+agents = [
+    { name = "insightface" },
+    { name = "onnxruntime", version = "1.24.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "onnxruntime", version = "1.25.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "opencv-python-headless" },
 ]
 
 [package.dev-dependencies]
@@ -2346,11 +2350,11 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "greenlet", specifier = ">=3.3.0" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "insightface", specifier = ">=0.7.3" },
+    { name = "insightface", marker = "extra == 'agents'", specifier = ">=0.7.3" },
     { name = "langgraph", specifier = ">=1.0.8" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.0.5" },
-    { name = "onnxruntime", specifier = ">=1.17.0" },
-    { name = "opencv-python-headless", specifier = ">=4.8.0" },
+    { name = "onnxruntime", marker = "extra == 'agents'", specifier = ">=1.17.0" },
+    { name = "opencv-python-headless", marker = "extra == 'agents'", specifier = ">=4.8.0" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.3" },
     { name = "psycopg2-binary", specifier = ">=2.9.12" },
@@ -2361,6 +2365,7 @@ requires-dist = [
     { name = "sqlmodel", specifier = ">=0.0.31" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
+provides-extras = ["agents"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -13,15 +13,73 @@ import { StagePipeline } from "~/components/layout/StagePipeline";
 import { StageView } from "~/components/layout/StageView";
 import { AssetDrawer } from "~/components/panels/AssetDrawer";
 import { HistoryDrawer } from "~/components/panels/HistoryDrawer";
+import { TextStagePanel } from "~/components/project/TextStagePanel";
 import { Button } from "~/components/ui/Button";
 import { Card } from "~/components/ui/Card";
 import { useProjectWebSocket } from "~/hooks/useWebSocket";
 import { projectsApi } from "~/services/api";
+import { useChatPanelStore } from "~/stores/chatPanelStore";
 import { useEditorStore, useShallow } from "~/stores/editorStore";
-import type { ProjectProviderSettings, RecoveryControlRead } from "~/types";
+import type {
+	PipelineStageKey,
+	ProjectProviderSettings,
+	RecoveryControlRead,
+	TextStage,
+} from "~/types";
 import { ApiError } from "~/types/errors";
 import { toast } from "~/utils/toast";
 import { isWorkflowStage } from "~/utils/workflowStage";
+
+const TEXT_STAGE_STATUS_PRIORITY: Record<string, number> = {
+	pending: 0,
+	running: 1,
+	completed: 2,
+	needs_review: 2,
+	failed: 2,
+};
+
+function mergeFetchedTextStages(
+	currentStages: TextStage[],
+	fetchedStages: TextStage[],
+): TextStage[] {
+	const merged = new Map(currentStages.map((stage) => [stage.stage, stage]));
+
+	for (const fetched of fetchedStages) {
+		const existing = merged.get(fetched.stage);
+		if (!existing) {
+			merged.set(fetched.stage, fetched);
+			continue;
+		}
+
+		const existingPriority = TEXT_STAGE_STATUS_PRIORITY[existing.status] ?? 0;
+		const fetchedPriority = TEXT_STAGE_STATUS_PRIORITY[fetched.status] ?? 0;
+		const existingUpdatedAt = existing.updated_at ?? "";
+		const fetchedUpdatedAt = fetched.updated_at ?? "";
+
+		if (
+			fetchedPriority > existingPriority ||
+			(fetchedPriority === existingPriority && fetchedUpdatedAt > existingUpdatedAt)
+		) {
+			merged.set(fetched.stage, { ...existing, ...fetched });
+			continue;
+		}
+
+		merged.set(fetched.stage, {
+			...fetched,
+			...existing,
+			content: existing.content ?? fetched.content ?? null,
+			artifact_id: Math.max(existing.artifact_id ?? 0, fetched.artifact_id ?? 0),
+		});
+	}
+
+	return [...merged.values()].sort((a, b) => a.order - b.order);
+}
+
+function feedbackTypeForStage(stage: PipelineStageKey | "review" | string | null | undefined) {
+	if (stage === "render") return "character";
+	if (stage === "compose") return "compose";
+	return "plan";
+}
 
 export function ProjectPage() {
 	const { id } = useParams<{ id: string }>();
@@ -36,6 +94,7 @@ export function ProjectPage() {
 		awaitingConfirm: storeAwaitingConfirm,
 		recoveryControl: storeRecoveryControl,
 		runMode: storeRunMode,
+		textStages: storeTextStages,
 	} = useEditorStore(
 		useShallow((s) => ({
 			isGenerating: s.isGenerating,
@@ -44,6 +103,7 @@ export function ProjectPage() {
 			awaitingConfirm: s.awaitingConfirm,
 			recoveryControl: s.recoveryControl,
 			runMode: s.runMode,
+			textStages: s.textStages,
 		})),
 	);
 	const hasActiveRun = storeIsGenerating || Boolean(storeCurrentRunId);
@@ -53,6 +113,7 @@ export function ProjectPage() {
 	const autoStartTriggered = useRef(false);
 	const generateRequestTokenRef = useRef(0);
 	const retryCount = useRef(0);
+	const openChat = useChatPanelStore((s) => s.open);
 
 	const { send } = useProjectWebSocket(projectId);
 
@@ -122,6 +183,12 @@ export function ProjectPage() {
 		enabled: !!project,
 	});
 
+	const { data: textStages } = useQuery({
+		queryKey: ["text-stages", projectId],
+		queryFn: () => projectsApi.getTextStages(projectId),
+		enabled: !!project,
+	});
+
 	useEffect(() => {
 		if (characters) {
 			useEditorStore.getState().setCharacters(characters);
@@ -133,6 +200,15 @@ export function ProjectPage() {
 			useEditorStore.getState().setShots(shots);
 		}
 	}, [shots]);
+
+	useEffect(() => {
+		if (textStages) {
+			const editorStore = useEditorStore.getState();
+			editorStore.setTextStages(
+				mergeFetchedTextStages(editorStore.textStages, textStages),
+			);
+		}
+	}, [textStages]);
 
 	useEffect(() => {
 		if (project?.video_url) {
@@ -147,6 +223,7 @@ export function ProjectPage() {
 		const editorStore = useEditorStore.getState();
 
 		editorStore.clearMessages();
+		editorStore.clearTextStages();
 		editorStore.resetRunState();
 		editorStore.setCurrentStage("plan");
 		editorStore.setSelectedShot(null);
@@ -176,9 +253,18 @@ export function ProjectPage() {
 	}, [messages]);
 
 	const generateMutation = useMutation({
-		mutationFn: ({ requestToken }: { requestToken: number }) =>
+		mutationFn: ({
+			requestToken,
+			startStage,
+		}: {
+			requestToken: number;
+			startStage?: PipelineStageKey;
+		}) =>
 			projectsApi
-				.generate(projectId, { auto_mode: storeRunMode === "yolo" })
+				.generate(projectId, {
+					auto_mode: storeRunMode === "yolo",
+					start_stage: startStage,
+				})
 				.then((run) => ({ run, requestToken })),
 		onSuccess: ({ run, requestToken }) => {
 			if (requestToken !== generateRequestTokenRef.current) return;
@@ -206,6 +292,13 @@ export function ProjectPage() {
 							.getState()
 							.setCurrentAgent(control.active_run.current_agent);
 						useEditorStore.getState().setProgress(control.active_run.progress);
+					}
+					if (
+						control.state === "recoverable" &&
+						useEditorStore.getState().runMode === "yolo"
+					) {
+						resumeMutation.mutate(control);
+						return;
 					}
 				} else {
 					toast.warning({
@@ -236,7 +329,7 @@ export function ProjectPage() {
 				projectId,
 				content,
 				undefined,
-				storeCurrentAgent ?? "plan",
+				feedbackTypeForStage(useEditorStore.getState().currentStage),
 			),
 		onError: (error: Error | ApiError) => {
 			const apiError = error instanceof ApiError ? error : null;
@@ -272,15 +365,18 @@ export function ProjectPage() {
 	});
 
 	const resumeMutation = useMutation({
-		mutationFn: () => {
-			const control = storeRecoveryControl;
+		mutationFn: (controlOverride?: RecoveryControlRead | null) => {
+			const control =
+				controlOverride ?? useEditorStore.getState().recoveryControl;
 			if (!control) {
 				throw new Error("没有可恢复的运行");
 			}
-			return projectsApi.resume(projectId, control.active_run.id);
+			const autoMode = useEditorStore.getState().runMode === "yolo";
+			return projectsApi.resume(projectId, control.active_run.id, autoMode);
 		},
-		onSuccess: (run) => {
-			const control = storeRecoveryControl;
+		onSuccess: (run, controlOverride) => {
+			const control =
+				controlOverride ?? useEditorStore.getState().recoveryControl;
 			const s = useEditorStore.getState();
 			s.setGenerating(true);
 			s.setCurrentRunId(run.id);
@@ -314,8 +410,21 @@ export function ProjectPage() {
 		const requestToken = generateRequestTokenRef.current + 1;
 		generateRequestTokenRef.current = requestToken;
 		useEditorStore.getState().clearMessages();
+		useEditorStore.getState().clearTextStages();
 		useEditorStore.getState().setCurrentStage("plan");
-		generateMutation.mutate({ requestToken });
+		generateMutation.mutate({ requestToken, startStage: "plan" });
+	};
+
+	const handleAdvanceStage = async () => {
+		if (generateMutation.isPending || hasActiveRun) return;
+		const current = storeCurrentStage;
+		let startStage: PipelineStageKey = "plan";
+		if (current === "plan") startStage = "render";
+		if (current === "render") startStage = "compose";
+		if (current === "compose") return;
+		const requestToken = generateRequestTokenRef.current + 1;
+		generateRequestTokenRef.current = requestToken;
+		generateMutation.mutate({ requestToken, startStage });
 	};
 
 	const handleFeedback = (content: string) => {
@@ -358,8 +467,9 @@ export function ProjectPage() {
 	};
 
 	const handleResume = () => {
-		if (!storeRecoveryControl) return;
-		resumeMutation.mutate();
+		const control = useEditorStore.getState().recoveryControl;
+		if (!control) return;
+		resumeMutation.mutate(control);
 	};
 
 	useEffect(() => {
@@ -394,8 +504,9 @@ export function ProjectPage() {
 			const requestToken = generateRequestTokenRef.current + 1;
 			generateRequestTokenRef.current = requestToken;
 			editorStore.clearMessages();
+			editorStore.clearTextStages();
 			editorStore.setCurrentStage("plan");
-			generateMutation.mutate({ requestToken });
+			generateMutation.mutate({ requestToken, startStage: "plan" });
 		}
 	}, [project, searchParams, setSearchParams, generateMutation]);
 
@@ -442,8 +553,60 @@ export function ProjectPage() {
 			/>
 
 			<div className="flex-1 flex overflow-hidden">
-				<div className="flex-1 relative overflow-hidden">
+				<div className="project-page-scroll flex-1 min-w-0 overflow-y-auto">
+					<div className="space-y-4 p-4">
+						<Card className="rounded-lg border border-base-content/10 p-4">
+							<div className="flex flex-wrap items-center justify-between gap-3">
+								<div>
+									<h2 className="m-0 text-lg font-heading font-bold text-base-content">
+										文本生成工作台
+									</h2>
+									<p className="m-0 mt-1 text-sm text-base-content/60">
+										当前阶段：{storeCurrentStage}
+									</p>
+									<p className="m-0 mt-1 text-xs text-base-content/45">
+										{storeTextStages.find((stage) => stage.status === "running")?.name ??
+											(storeIsGenerating ? "文本任务执行中" : "等待开始")}
+									</p>
+								</div>
+								<div className="flex flex-wrap items-center gap-2">
+									<Button
+										variant="primary"
+										onClick={handleGenerate}
+										disabled={hasActiveRun || generateMutation.isPending}
+									>
+										开始生成
+									</Button>
+									<Button
+										variant="secondary"
+										onClick={handleAdvanceStage}
+										disabled={
+											hasActiveRun ||
+											generateMutation.isPending ||
+											storeCurrentStage === "compose"
+										}
+									>
+										下一步
+									</Button>
+									<Button
+										variant="ghost"
+										onClick={openChat}
+									>
+										打开对话
+									</Button>
+									{hasActiveRun && (
+										<Button variant="error" onClick={handleCancel}>
+											停止
+										</Button>
+									)}
+								</div>
+							</div>
+						</Card>
+						<TextStagePanel stages={storeTextStages} />
+					</div>
+					<div className="relative h-[calc(100%-1rem)] min-h-[32rem] overflow-hidden">
 					<StageView projectId={projectId} />
+					</div>
 				</div>
 
 				<ChatDrawer

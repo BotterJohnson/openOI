@@ -61,6 +61,7 @@ const STALE_SHAPE_TYPES = new Set([
 
 export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 	const editorRef = useRef<Editor | null>(null);
+	const canvasContainerRef = useRef<HTMLDivElement | null>(null);
 	const [isInitialized, setIsInitialized] = useState(false);
 	const lastAppliedShapesSignatureRef = useRef<string | null>(null);
 	const shapesRef = useRef<TLShapePartial[]>([]);
@@ -69,6 +70,7 @@ export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 	const {
 		characters,
 		shots,
+		textStages,
 		projectVideoUrl,
 		projectTitle,
 		projectSummary,
@@ -82,6 +84,7 @@ export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 		useShallow((s) => ({
 			characters: s.characters,
 			shots: s.shots,
+			textStages: s.textStages,
 			projectVideoUrl: s.projectVideoUrl,
 			projectTitle: s.projectTitle,
 			projectSummary: s.projectSummary,
@@ -152,6 +155,7 @@ export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 		summary,
 		characters,
 		shots,
+		textStages,
 		videoUrl: finalVideoUrl,
 		videoTitle,
 		visibleSections,
@@ -282,16 +286,10 @@ export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 	const handleMount = useCallback((editor: Editor) => {
 		editorRef.current = editor;
 
-		// Clean up any stale IndexedDB persistence from old canvas versions
-		if (typeof indexedDB !== "undefined" && indexedDB.databases) {
-			indexedDB.databases().then((dbs) => {
-				for (const db of dbs) {
-					if (db.name && db.name.startsWith("TLDRAW_")) {
-						indexedDB.deleteDatabase(db.name);
-					}
-				}
-			});
-		}
+		editor.setCameraOptions({
+			...editor.getCameraOptions(),
+			wheelBehavior: "zoom",
+		});
 
 		// Delete any stale shapes from previous layout architectures
 		const allShapes = editor.getCurrentPageShapes();
@@ -322,6 +320,43 @@ export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 		}
 
 		setIsInitialized(true);
+	}, []);
+
+	useEffect(() => {
+		const container = canvasContainerRef.current;
+		if (!container) return;
+
+		const handleWheel = (event: WheelEvent) => {
+			if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey) {
+				return;
+			}
+
+			const primaryScroller = container.closest(".project-page-scroll");
+			if (!(primaryScroller instanceof HTMLElement)) {
+				return;
+			}
+
+			if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
+				return;
+			}
+
+			const canScrollDown =
+				primaryScroller.scrollTop + primaryScroller.clientHeight <
+				primaryScroller.scrollHeight;
+			const canScrollUp = primaryScroller.scrollTop > 0;
+			const wantsDown = event.deltaY > 0;
+			const wantsUp = event.deltaY < 0;
+
+			if ((wantsDown && canScrollDown) || (wantsUp && canScrollUp)) {
+				primaryScroller.scrollBy({ top: event.deltaY });
+				event.preventDefault();
+			}
+		};
+
+		container.addEventListener("wheel", handleWheel, { passive: false });
+		return () => {
+			container.removeEventListener("wheel", handleWheel);
+		};
 	}, []);
 
 	// Sync shapes when layout changes — preserve user-dragged positions
@@ -419,12 +454,15 @@ export function InfiniteCanvas({ projectId }: InfiniteCanvasProps) {
 
 	return (
 		<>
-			<div className="h-full w-full infinite-canvas-container relative">
+			<div
+				ref={canvasContainerRef}
+				className="h-full w-full infinite-canvas-container relative"
+			>
 				<Tldraw
 					shapeUtils={customShapeUtils}
 					components={components}
 					onMount={handleMount}
-					persistenceKey="openoii-canvas-v10"
+					persistenceKey={`openoii-canvas-project-${projectId}`}
 				>
 					<CanvasToolbar />
 					<ShapeContextMenu />

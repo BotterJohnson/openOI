@@ -90,7 +90,7 @@ async def generate_project(
     project = await get_or_404(session, Project, project_id)
 
     active_run = await _latest_run_for_project(session, project_id, ("queued", "running"))
-    resumable_run = await _latest_run_for_project(session, project_id, ("failed", "cancelled"))
+    resumable_run = await _latest_run_for_project(session, project_id, ("failed",))
 
     provider_resolution: ProviderResolution = await resolve_project_provider_settings_async(
         project, settings
@@ -150,10 +150,11 @@ async def generate_project(
                 orchestrator = GenerationOrchestrator(
                     settings=settings, ws=ws, session=task_session
                 )
-                await orchestrator.run(
+                await orchestrator.run_from_agent(
                     project_id=project_id,
                     run_id=run_id,
                     request=payload,
+                    agent_name=payload.start_stage or "plan",
                     auto_mode=payload.auto_mode,
                 )
         except asyncio.CancelledError:
@@ -197,7 +198,11 @@ async def resume_project_run(
                 orchestrator = GenerationOrchestrator(
                     settings=settings, ws=ws, session=task_session
                 )
-                await orchestrator.resume_from_recovery(project_id=project_id, run_id=run_id)
+                await orchestrator.resume_from_recovery(
+                    project_id=project_id,
+                    run_id=run_id,
+                    auto_mode=payload.auto_mode,
+                )
         except asyncio.CancelledError:
             async with async_session_maker() as cancel_session:
                 run_obj = await cancel_session.get(AgentRun, run_id)

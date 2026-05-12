@@ -8,8 +8,6 @@ from __future__ import annotations
 import io
 import logging
 
-import cv2
-import numpy as np
 from PIL import Image
 
 logger = logging.getLogger(__name__)
@@ -18,6 +16,22 @@ logger = logging.getLogger(__name__)
 # 后续使用从缓存读取
 _FACE_ANALYSIS_APP = None
 _INIT_ATTEMPTED = False
+_OPTIONAL_DEPS_AVAILABLE: bool | None = None
+
+
+def _load_cv_deps():
+    """Load optional OpenCV/Numpy dependencies used by face cropping."""
+    global _OPTIONAL_DEPS_AVAILABLE
+    try:
+        import cv2
+        import numpy as np
+    except ImportError as exc:
+        if _OPTIONAL_DEPS_AVAILABLE is not False:
+            logger.info("Face cropping dependencies are not installed: %s", exc)
+        _OPTIONAL_DEPS_AVAILABLE = False
+        return None
+    _OPTIONAL_DEPS_AVAILABLE = True
+    return cv2, np
 
 
 def _get_face_analysis():
@@ -29,6 +43,9 @@ def _get_face_analysis():
         return None
     _INIT_ATTEMPTED = True
     try:
+        if _load_cv_deps() is None:
+            return None
+
         from insightface.app import FaceAnalysis
 
         app = FaceAnalysis(
@@ -64,6 +81,10 @@ def detect_faces(image_bytes: bytes) -> list[dict]:
     app = _get_face_analysis()
     if app is None:
         return []
+    cv_deps = _load_cv_deps()
+    if cv_deps is None:
+        return []
+    cv2, np = cv_deps
 
     # bytes → numpy array
     img_array = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
@@ -101,6 +122,10 @@ def crop_face_from_image(
     faces = detect_faces(image_bytes)
     if not faces:
         return None
+    cv_deps = _load_cv_deps()
+    if cv_deps is None:
+        return None
+    cv2, np = cv_deps
 
     # 取置信度最高的面部
     best_face = max(faces, key=lambda f: f["det_score"])

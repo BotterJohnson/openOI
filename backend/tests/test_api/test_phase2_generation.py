@@ -208,3 +208,41 @@ async def test_resume_project_run_starts_resume_task_for_recoverable_run(
 
     await asyncio.sleep(0)
     assert captured == {"project_id": project.id, "run_id": resumable_run.id}
+
+
+@pytest.mark.asyncio
+async def test_resume_project_run_forwards_auto_mode(
+    async_client, test_session, monkeypatch
+):
+    project = await create_project(test_session)
+    resumable_run = await create_run(test_session, project_id=project.id, status="failed")
+
+    captured: dict[str, object] = {}
+
+    async def _fake_resume(self, *, project_id: int, run_id: int, auto_mode: bool = False):
+        captured["project_id"] = project_id
+        captured["run_id"] = run_id
+        captured["auto_mode"] = auto_mode
+
+    monkeypatch.setattr(
+        generation_routes.GenerationOrchestrator,
+        "resume_from_recovery",
+        _fake_resume,
+    )
+
+    loop = asyncio.get_running_loop()
+    monkeypatch.setattr(generation_routes.asyncio, "create_task", loop.create_task)
+
+    res = await async_client.post(
+        f"/api/v1/projects/{project.id}/resume",
+        json={"run_id": resumable_run.id, "auto_mode": True},
+    )
+
+    assert res.status_code == 200
+
+    await asyncio.sleep(0)
+    assert captured == {
+        "project_id": project.id,
+        "run_id": resumable_run.id,
+        "auto_mode": True,
+    }

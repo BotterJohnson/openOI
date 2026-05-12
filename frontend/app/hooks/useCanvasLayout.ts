@@ -7,7 +7,7 @@ import type {
 	PlanSectionShape,
 	StoryboardSectionShape,
 } from "~/components/canvas/shapes";
-import type { Character, Shot, WorkflowStage } from "~/types";
+import type { Character, Shot, TextStage, WorkflowStage } from "~/types";
 
 type SectionKey = "plan" | "render" | "compose";
 type SectionState = "draft" | "generating" | "blocked" | "complete";
@@ -64,6 +64,7 @@ interface UseCanvasLayoutProps {
 	summary: string | null;
 	characters: Character[];
 	shots: Shot[];
+	textStages: TextStage[];
 	videoUrl: string | null;
 	videoTitle: string;
 	visibleSections: readonly SectionKey[];
@@ -81,6 +82,7 @@ function deriveSectionState(
 		summary: string | null;
 		characters: Character[];
 		shots: Shot[];
+		textStages: TextStage[];
 		videoUrl: string | null;
 		isGenerating: boolean;
 		awaitingConfirm: boolean;
@@ -90,14 +92,15 @@ function deriveSectionState(
 	const isActive =
 		data.isGenerating || data.awaitingConfirm || Boolean(data.currentRunId);
 	const hasContent = Boolean(data.story) || Boolean(data.summary);
+	const hasTextStages = data.textStages.length > 0;
 	const hasCharImages = data.characters.some((c) => Boolean(c.image_url));
 	const hasStoryboardImg = data.shots.some((s) => Boolean(s.image_url));
 
 	switch (key) {
 		case "plan":
-			return isActive && !hasContent
+			return isActive && !hasContent && !hasTextStages
 				? "generating"
-				: hasContent
+				: hasContent || hasTextStages
 					? "complete"
 					: "draft";
 		case "render":
@@ -124,12 +127,13 @@ function isPlaceholder(
 		summary: string | null;
 		characters: Character[];
 		shots: Shot[];
+		textStages: TextStage[];
 		videoUrl: string | null;
 	},
 ): boolean {
 	switch (key) {
 		case "plan":
-			return !data.story && !data.summary;
+			return !data.story && !data.summary && data.textStages.length === 0;
 		case "render":
 			return data.characters.length === 0 && data.shots.length === 0;
 		case "compose":
@@ -155,6 +159,7 @@ export function useCanvasLayout({
 	summary,
 	characters,
 	shots,
+	textStages,
 	videoUrl,
 	videoTitle,
 	visibleSections,
@@ -175,6 +180,7 @@ export function useCanvasLayout({
 			summary,
 			characters,
 			shots,
+			textStages,
 			videoUrl,
 			isGenerating,
 			awaitingConfirm,
@@ -185,6 +191,7 @@ export function useCanvasLayout({
 			summary,
 			characters,
 			shots,
+			textStages,
 			videoUrl,
 			isGenerating,
 			awaitingConfirm,
@@ -227,6 +234,7 @@ export function useCanvasLayout({
 					summary: summary || "",
 					characters,
 					shots,
+					textStages,
 					sectionState: sectionStates.plan ?? "draft",
 					placeholder: placeholders.plan ?? true,
 					statusLabel: statusLabels.plan ?? "待生成",

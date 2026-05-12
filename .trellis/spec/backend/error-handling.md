@@ -98,6 +98,8 @@ async def delete_project(project_id: int, session: AsyncSession = SessionDep):
 
 Registered in `app/main.py:create_app()`:
 
+- `HTTPException` / framework 404s → logged at `WARNING` for 4xx and `ERROR` for 5xx with `{status_code, path, method}` extras → returns FastAPI-compatible `{"detail": ...}` response bodies.
+- `RequestValidationError` → logged at `WARNING` with `{status_code, path, method, details}` extras → returns FastAPI-compatible `422 {"detail": [...]}` response bodies.
 - `AppException` → logged at `ERROR` level with `{code, status_code, details, path, method}` extras → returns the JSON envelope.
 - bare `Exception` → logged at `EXCEPTION` level (full traceback) → returns `500 INTERNAL_ERROR`. In `environment="development"` the response body includes `details.error = str(exc)`; in other environments details are stripped.
 

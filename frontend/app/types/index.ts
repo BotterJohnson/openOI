@@ -26,6 +26,15 @@ export interface ProjectProviderOverridesPayload {
 	video_provider_override?: string | null;
 }
 
+export type PipelineStageKey = "plan" | "render" | "compose";
+
+export interface GenerateProjectPayload {
+	seed?: number;
+	notes?: string;
+	auto_mode?: boolean;
+	start_stage?: PipelineStageKey;
+}
+
 export interface CreateProjectPayload extends ProjectProviderOverridesPayload {
 	title: string;
 	story?: string;
@@ -264,6 +273,39 @@ export interface RunConfirmedEventData {
 	auto_mode?: boolean;
 }
 
+export type TextStageKey =
+	| "text_intake"
+	| "text_story_outline"
+	| "text_chapter_flow"
+	| "text_arrangement"
+	| "text_chapter_prose"
+	| "text_storyboard"
+	| "text_video_prompts"
+	| "text_consistency_review";
+
+export interface TextStage {
+	stage: TextStageKey;
+	name: string;
+	status: "pending" | "running" | "completed" | "failed" | "needs_review" | string;
+	order: number;
+	artifact_id: number;
+	run_id: number;
+	content?: Record<string, unknown> | null;
+	created_at?: string;
+	updated_at?: string;
+}
+
+export interface TextStageEventData {
+	run_id?: number;
+	project_id?: number;
+	stage: TextStageKey;
+	name: string;
+	status: string;
+	order: number;
+	artifact_id: number;
+	content?: Record<string, unknown> | null;
+}
+
 // WebSocket event types
 export type WsEventType =
 	| "connected"
@@ -285,7 +327,11 @@ export type WsEventType =
 	| "shot_updated"
 	| "shot_deleted"
 	| "project_updated"
-	| "data_cleared";
+	| "data_cleared"
+	| "text_stage_started"
+	| "text_stage_updated"
+	| "text_stage_completed"
+	| "text_stage_failed";
 
 export interface WsEvent {
 	type: WsEventType;
@@ -357,7 +403,7 @@ export interface ConfigItem {
 	value: string | null;
 	is_sensitive: boolean;
 	is_masked: boolean;
-	source: "db" | "env";
+	source: "db" | "env" | "default";
 }
 
 export interface ConfigSection {

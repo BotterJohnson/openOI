@@ -1,5 +1,5 @@
 import type { TLBaseShape } from "tldraw";
-import type { Character, ReviewState, Shot } from "~/types";
+import type { Character, ReviewState, Shot, TextStage } from "~/types";
 
 export interface CanvasSectionStatusProps {
 	sectionState: string;
@@ -141,6 +141,7 @@ export type PlanSectionShape = TLBaseShape<
 		summary: string;
 		characters: ReviewedCharacter[];
 		shots: ReviewedShot[];
+		textStages: TextStage[];
 	} & CanvasSectionStatusProps
 >;
 

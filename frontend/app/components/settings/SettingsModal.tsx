@@ -199,7 +199,24 @@ export function SettingsModal() {
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
-		updateMutation.mutate(formState);
+		const initialState =
+			config?.reduce(
+				(acc, item) => {
+					acc[item.key] = item.value;
+					return acc;
+				},
+				{} as Record<string, ConfigValue>,
+			) ?? {};
+		const changedConfig = Object.fromEntries(
+			Object.entries(formState).filter(([key, value]) => {
+				const initialValue = initialState[key] ?? null;
+				const normalizedInitial =
+					initialValue === null ? null : String(initialValue);
+				const normalizedValue = value === null ? null : String(value);
+				return normalizedValue !== normalizedInitial;
+			}),
+		) as Record<string, ConfigValue>;
+		updateMutation.mutate(changedConfig);
 	};
 
 	const handleCancel = () => {
@@ -286,6 +303,9 @@ export function SettingsModal() {
 				{item.source === "env" && (
 					<span className="badge badge-info badge-xs">仅.env</span>
 				)}
+				{item.source === "default" && (
+					<span className="badge badge-ghost badge-xs">默认</span>
+				)}
 			</div>
 			<ConfigInput
 				item={item}
@@ -316,13 +336,19 @@ export function SettingsModal() {
 				i.key.toLowerCase().startsWith("text_") &&
 				i.key.toLowerCase() !== "text_provider",
 		);
+		const activeProviderLabel =
+			textProvider === "openai" ? "OpenAI 兼容接口" : "Anthropic Claude";
 
 		return (
 			<div className="space-y-6">
 				{/* 分类描述 */}
 				<div className="flex items-center gap-2 text-sm text-info bg-info/10 px-4 py-2 rounded-lg border border-info/30">
 					<InformationCircleIcon className="w-4 h-4 shrink-0" />
-					<span>{tabConfig[activeTab]?.desc}</span>
+					<span>
+						当前生效：{activeProviderLabel}。TEXT_PROVIDER=anthropic 时只使用
+						ANTHROPIC_*；TEXT_PROVIDER=openai 时只使用 TEXT_*（OpenAI
+						兼容接口）。
+					</span>
 				</div>
 
 				{/* 服务提供商选择 */}
@@ -354,7 +380,8 @@ export function SettingsModal() {
 								<div>
 									<div className="font-bold">Anthropic Claude</div>
 									<div className="text-xs text-base-content/60">
-										Anthropic 兼容接口，推荐使用
+										使用 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN /
+										ANTHROPIC_BASE_URL / ANTHROPIC_MODEL
 									</div>
 								</div>
 							</label>
@@ -379,7 +406,8 @@ export function SettingsModal() {
 								<div>
 									<div className="font-bold">OpenAI 兼容</div>
 									<div className="text-xs text-base-content/60">
-										支持任何 OpenAI 兼容接口
+										使用 TEXT_BASE_URL / TEXT_API_KEY / TEXT_MODEL /
+										TEXT_ENDPOINT
 									</div>
 								</div>
 							</label>
@@ -394,6 +422,10 @@ export function SettingsModal() {
 							<SparklesIcon className="w-4 h-4" />
 							Anthropic Claude 配置
 						</h4>
+						<p className="text-xs text-base-content/60 pl-4">
+							当前 TEXT_PROVIDER=anthropic，这一组会生效；OpenAI 兼容的
+							TEXT_* 配置会保留但不会用于文本生成。
+						</p>
 						<div className="space-y-4 pl-4 bg-accent/5 rounded-r-lg py-2">
 							{anthropicItems.map(renderConfigItem)}
 						</div>
@@ -407,6 +439,10 @@ export function SettingsModal() {
 							<SparklesIcon className="w-4 h-4" />
 							OpenAI 兼容接口配置
 						</h4>
+						<p className="text-xs text-base-content/60 pl-4">
+							当前 TEXT_PROVIDER=openai，这一组会生效；Anthropic 的
+							ANTHROPIC_* 配置会保留但不会用于文本生成。
+						</p>
 						<div className="space-y-4 pl-4 bg-accent/5 rounded-r-lg py-2">
 							{openaiItems.map(renderConfigItem)}
 						</div>
@@ -794,18 +830,26 @@ function getConfigDescription(key: string): string {
 		REDIS_URL: "Redis 连接字符串，用于跨进程信号共享",
 
 		// LLM 服务
-		ANTHROPIC_API_KEY: "Anthropic 官方 API 密钥",
-		ANTHROPIC_AUTH_TOKEN: "中转站 Token（国内推荐使用）",
-		ANTHROPIC_BASE_URL: "API 基础地址（官方或中转站地址）",
-		ANTHROPIC_MODEL: "Claude 模型名称，如 claude-sonnet-4-5-20250929",
+		ANTHROPIC_API_KEY:
+			"Anthropic 官方 API 密钥；仅当 TEXT_PROVIDER=anthropic 时生效",
+		ANTHROPIC_AUTH_TOKEN:
+			"Anthropic 兼容中转站 Token；仅当 TEXT_PROVIDER=anthropic 时生效",
+		ANTHROPIC_BASE_URL:
+			"Anthropic API 基础地址或中转站地址；仅当 TEXT_PROVIDER=anthropic 时生效",
+		ANTHROPIC_MODEL:
+			"Claude/Anthropic 兼容模型名称；仅当 TEXT_PROVIDER=anthropic 时生效",
 
 		// 文本生成服务
 		TEXT_PROVIDER:
-			"文本生成服务提供商：anthropic（Claude）/ openai（OpenAI 兼容）",
-		TEXT_BASE_URL: "文本生成服务地址（OpenAI 兼容接口）",
-		TEXT_API_KEY: "文本生成 API 密钥（OpenAI 兼容）",
-		TEXT_MODEL: "文本生成模型名称（OpenAI 兼容），如 deepseek-v4-flash",
-		TEXT_ENDPOINT: "文本生成 API 端点路径（OpenAI 兼容）",
+			"决定文本生成使用哪一组配置：anthropic 使用 ANTHROPIC_*；openai 使用 TEXT_*",
+		TEXT_BASE_URL:
+			"OpenAI 兼容文本接口基础地址，例如 https://api.openai.com/v1；仅当 TEXT_PROVIDER=openai 时生效",
+		TEXT_API_KEY:
+			"OpenAI 兼容文本接口 API Key；仅当 TEXT_PROVIDER=openai 时生效",
+		TEXT_MODEL:
+			"OpenAI 兼容文本接口模型名称，例如 gpt-4o-mini、deepseek-v4-flash；仅当 TEXT_PROVIDER=openai 时生效",
+		TEXT_ENDPOINT:
+			"OpenAI 兼容文本接口路径，通常为 /chat/completions；仅当 TEXT_PROVIDER=openai 时生效",
 
 		// 图像服务
 		IMAGE_BASE_URL: "图像生成服务地址（OpenAI 兼容接口）",

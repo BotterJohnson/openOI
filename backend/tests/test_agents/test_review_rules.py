@@ -140,6 +140,11 @@ async def test_review_compose_feedback_type(test_session, test_settings):
     result = await ReviewRuleEngine().run(ctx)
 
     assert result["start_agent"] == "compose"
+    assert any(
+        "正在立即更新合成阶段内容" in event["data"].get("content", "")
+        for _, event in ctx.ws.events
+        if event.get("type") == "run_message"
+    )
 
 
 @pytest.mark.asyncio

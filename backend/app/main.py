@@ -5,15 +5,19 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from app.api.v1.router import api_router
 from app.config import get_settings
 from app.db.session import init_db
 from app.exceptions import AppException
+from app.logging_config import configure_logging
 from app.ws.manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -22,14 +26,19 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+def ensure_static_dirs() -> None:
+    """Ensure static media directories exist before app startup."""
+    STATIC_DIR.mkdir(parents=True, exist_ok=True)
+    (STATIC_DIR / "videos").mkdir(parents=True, exist_ok=True)
+    (STATIC_DIR / "images").mkdir(parents=True, exist_ok=True)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     import logging
 
     log = logging.getLogger("openOii.lifespan")
-    STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    (STATIC_DIR / "videos").mkdir(parents=True, exist_ok=True)
-    (STATIC_DIR / "images").mkdir(parents=True, exist_ok=True)
+    ensure_static_dirs()
     log.info("lifespan: calling init_db")
     await init_db()
     log.info("lifespan: init_db done")
@@ -38,6 +47,8 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings)
+    ensure_static_dirs()
     app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
     app.add_middleware(
@@ -54,13 +65,53 @@ def create_app() -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     # 全局异常处理器
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+        """Log FastAPI HTTP exceptions while preserving the default response shape."""
+        log_method = logger.error if exc.status_code >= 500 else logger.warning
+        log_method(
+            "HTTPException: %s",
+            exc.detail,
+            extra={
+                "status_code": exc.status_code,
+                "path": request.url.path,
+                "method": request.method,
+            },
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        """Log request validation failures while preserving FastAPI's response shape."""
+        logger.warning(
+            "Request validation failed",
+            extra={
+                "status_code": 422,
+                "path": request.url.path,
+                "method": request.method,
+                "details": exc.errors(),
+            },
+        )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(exc.errors())},
+        )
+
     @app.exception_handler(AppException)
     async def app_exception_handler(request: Request, exc: AppException):
         """处理自定义应用异常"""
         logger.error(
-            f"AppException: {exc.code} - {exc.message}",
+            "AppException: %s - %s",
+            exc.code,
+            exc.message,
             extra={
-                "code": exc.code,
+                "error_code": exc.code,
                 "status_code": exc.status_code,
                 "details": exc.details,
                 "path": request.url.path,
@@ -82,7 +133,8 @@ def create_app() -> FastAPI:
     async def general_exception_handler(request: Request, exc: Exception):
         """处理未捕获的异常"""
         logger.exception(
-            f"Unhandled exception: {str(exc)}",
+            "Unhandled exception: %s",
+            exc,
             extra={
                 "path": request.url.path,
                 "method": request.method,

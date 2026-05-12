@@ -40,6 +40,7 @@ async def test_init_db_cancels_stale_runs(test_session, test_settings):
 
     with patch("app.db.session.get_settings", return_value=test_settings), \
          patch("app.db.session._run_alembic_upgrade"), \
+         patch("app.db.session._ensure_metadata_tables"), \
          patch("app.db.session.async_session_maker", _mock_session_maker(test_session)), \
          patch("app.orchestration.persistence.ensure_postgres_checkpointer_setup"):
         await init_db()
@@ -64,6 +65,7 @@ async def test_init_db_sets_default_style(test_session, test_settings):
 
     with patch("app.db.session.get_settings", return_value=test_settings), \
          patch("app.db.session._run_alembic_upgrade"), \
+         patch("app.db.session._ensure_metadata_tables"), \
          patch("app.db.session.async_session_maker", _mock_session_maker(test_session)), \
          patch("app.orchestration.persistence.ensure_postgres_checkpointer_setup"):
         await init_db()
@@ -78,6 +80,7 @@ async def test_init_db_sets_default_style(test_session, test_settings):
 async def test_init_db_alembic_timeout(test_session, test_settings):
     with patch("app.db.session.get_settings", return_value=test_settings), \
          patch("app.db.session._run_alembic_upgrade"), \
+         patch("app.db.session._ensure_metadata_tables"), \
          patch("app.db.session.async_session_maker", _mock_session_maker(test_session)), \
          patch("app.orchestration.persistence.ensure_postgres_checkpointer_setup"), \
          patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
@@ -88,9 +91,11 @@ async def test_init_db_alembic_timeout(test_session, test_settings):
 async def test_init_db_alembic_failure(test_session, test_settings):
     with patch("app.db.session.get_settings", return_value=test_settings), \
          patch("app.db.session._run_alembic_upgrade", side_effect=RuntimeError("alembic died")), \
+         patch("app.db.session._ensure_metadata_tables"), \
          patch("app.db.session.async_session_maker", _mock_session_maker(test_session)), \
          patch("app.orchestration.persistence.ensure_postgres_checkpointer_setup"):
-        await init_db()
+        with pytest.raises(RuntimeError, match="Database migration failed"):
+            await init_db()
 
 
 def test_run_alembic_upgrade_handles_existing_table(test_settings):

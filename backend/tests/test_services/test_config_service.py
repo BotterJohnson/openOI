@@ -10,6 +10,7 @@ from app.services.config_service import (
     _is_masked_input,
     _parse_value,
     _requires_restart,
+    _serialize_config_value,
     is_sensitive_key,
     mask_value,
 )
@@ -56,6 +57,14 @@ def test_parse_value_falls_back_on_json_decode_error_for_container_types():
     assert _parse_value("{invalid", dict[str, str]) == "{invalid"
     assert _parse_value('{"bad":', dict[str, str]) == '{"bad":'
     assert _parse_value("[1, 2,", list[int]) == "[1, 2,"
+
+
+def test_serialize_config_value_uses_env_friendly_strings():
+    assert _serialize_config_value(None) is None
+    assert _serialize_config_value(True) == "true"
+    assert _serialize_config_value(False) == "false"
+    assert _serialize_config_value(["*"]) == '["*"]'
+    assert _serialize_config_value({"a": 1}) == '{"a": 1}'
 
 
 def test_load_env_file_parses_comments_export_and_quotes(monkeypatch, tmp_path):
@@ -118,6 +127,25 @@ async def test_config_service_list_effective_and_get_raw_value(test_session, mon
 
     assert await service.get_raw_value("TEXT_API_KEY") == "db-key"
     assert await service.get_raw_value("PUBLIC_BASE_URL") == "https://env.example.com"
+
+
+@pytest.mark.asyncio
+async def test_config_service_list_effective_includes_settings_defaults(
+    test_session, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("ENV_FILE", str(tmp_path / "missing.env"))
+
+    service = ConfigService(test_session)
+    items = await service.list_effective()
+    data = {item["key"]: item for item in items}
+
+    assert data["TEXT_PROVIDER"]["source"] == "default"
+    assert data["TEXT_PROVIDER"]["value"] == "anthropic"
+    assert data["TEXT_BASE_URL"]["source"] == "default"
+    assert data["TEXT_ENDPOINT"]["value"] == "/chat/completions"
+    assert data["ANTHROPIC_API_KEY"]["source"] == "default"
+    assert data["ANTHROPIC_API_KEY"]["value"] is None
+    assert data["ANTHROPIC_API_KEY"]["is_sensitive"] is True
 
 
 @pytest.mark.asyncio
